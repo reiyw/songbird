@@ -23,10 +23,7 @@ use crate::{
 };
 use flume::{Receiver, RecvError, Sender};
 use message::*;
-#[cfg(not(feature = "tokio-02-marker"))]
 use tokio::{runtime::Handle, spawn, time::sleep as tsleep};
-#[cfg(feature = "tokio-02-marker")]
-use tokio_compat::{runtime::Handle, spawn, time::delay_for as tsleep};
 use tracing::{debug, instrument, trace};
 
 pub(crate) fn start(config: Config, rx: Receiver<CoreMessage>, tx: Sender<CoreMessage>) {
@@ -331,10 +328,6 @@ impl ConnectionRetryData {
                             let _ = tx.send(Err(why));
 
                             let _ = interconnect.events.send(EventMessage::FireCoreEvent(
-                                CoreContext::DriverConnectFailed,
-                            ));
-
-                            let _ = interconnect.events.send(EventMessage::FireCoreEvent(
                                 CoreContext::DriverDisconnect(InternalDisconnect {
                                     kind: DisconnectKind::Connect,
                                     reason,
@@ -343,10 +336,6 @@ impl ConnectionRetryData {
                             ));
                         },
                         ConnectionFlavour::Reconnect => {
-                            let _ = interconnect.events.send(EventMessage::FireCoreEvent(
-                                CoreContext::DriverReconnectFailed,
-                            ));
-
                             let _ = interconnect.events.send(EventMessage::FireCoreEvent(
                                 CoreContext::DriverDisconnect(InternalDisconnect {
                                     kind: DisconnectKind::Reconnect,

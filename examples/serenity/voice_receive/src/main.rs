@@ -22,14 +22,14 @@ use serenity::{
         channel::Message,
         gateway::Ready,
         id::ChannelId,
-        misc::Mentionable
     },
+    prelude::{GatewayIntents, Mentionable},
     Result as SerenityResult,
 };
 
 use songbird::{
     driver::DecodeMode,
-    model::payload::{ClientConnect, ClientDisconnect, Speaking},
+    model::payload::{ClientDisconnect, Speaking},
     Config,
     CoreEvent,
     Event,
@@ -86,7 +86,7 @@ impl VoiceEventHandler for Receiver {
             },
             Ctx::SpeakingUpdate(data) => {
                 // You can implement logic here which reacts to a user starting
-                // or stopping speaking.
+                // or stopping speaking, and to map their SSRC to User ID.
                 println!(
                     "Source {} has {} speaking.",
                     data.ssrc,
@@ -114,26 +114,13 @@ impl VoiceEventHandler for Receiver {
                 // containing the call statistics and reporting information.
                 println!("RTCP packet received: {:?}", data.packet);
             },
-            Ctx::ClientConnect(
-                ClientConnect {audio_ssrc, video_ssrc, user_id, ..}
-            ) => {
-                // You can implement your own logic here to handle a user who has joined the
-                // voice channel e.g., allocate structures, map their SSRC to User ID.
-
-                println!(
-                    "Client connected: user {:?} has audio SSRC {:?}, video SSRC {:?}",
-                    user_id,
-                    audio_ssrc,
-                    video_ssrc,
-                );
-            },
             Ctx::ClientDisconnect(
                 ClientDisconnect {user_id, ..}
             ) => {
                 // You can implement your own logic here to handle a user who has left the
                 // voice channel e.g., finalise processing of statistics etc.
                 // You will typically need to map the User ID to their SSRC; observed when
-                // speaking or connecting.
+                // first speaking.
 
                 println!("Client disconnected: user {:?}", user_id);
             },
@@ -164,13 +151,16 @@ async fn main() {
             .prefix("~"))
         .group(&GENERAL_GROUP);
 
+    let intents = GatewayIntents::non_privileged()
+        | GatewayIntents::MESSAGE_CONTENT;
+
     // Here, we need to configure Songbird to decode all incoming voice packets.
     // If you want, you can do this on a per-call basis---here, we need it to
     // read the audio data that other people are sending us!
     let songbird_config = Config::default()
         .decode_mode(DecodeMode::Decode);
 
-    let mut client = Client::builder(&token)
+    let mut client = Client::builder(&token, intents)
         .event_handler(Handler)
         .framework(framework)
         .register_songbird_from_config(songbird_config)
@@ -192,7 +182,7 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
         },
     };
 
-    let guild = msg.guild(&ctx.cache).await.unwrap();
+    let guild = msg.guild(&ctx.cache).unwrap();
     let guild_id = guild.id;
 
     let manager = songbird::get(ctx).await
@@ -225,11 +215,6 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
         );
 
         handler.add_global_event(
-            CoreEvent::ClientConnect.into(),
-            Receiver::new(),
-        );
-
-        handler.add_global_event(
             CoreEvent::ClientDisconnect.into(),
             Receiver::new(),
         );
@@ -245,7 +230,7 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 #[command]
 #[only_in(guilds)]
 async fn leave(ctx: &Context, msg: &Message) -> CommandResult {
-    let guild = msg.guild(&ctx.cache).await.unwrap();
+    let guild = msg.guild(&ctx.cache).unwrap();
     let guild_id = guild.id;
 
     let manager = songbird::get(ctx).await

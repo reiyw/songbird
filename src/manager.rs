@@ -22,10 +22,7 @@ use serenity::{
     },
 };
 use std::sync::Arc;
-#[cfg(not(feature = "tokio-02-marker"))]
 use tokio::sync::Mutex;
-#[cfg(feature = "tokio-02-marker")]
-use tokio_compat::sync::Mutex;
 use tracing::debug;
 #[cfg(feature = "twilight")]
 use twilight_gateway::Cluster;
@@ -87,7 +84,7 @@ impl Songbird {
     /// [`process`].
     ///
     /// [`process`]: Songbird::process
-    pub fn twilight<U>(cluster: Cluster, user_id: U) -> Self
+    pub fn twilight<U>(cluster: Arc<Cluster>, user_id: U) -> Self
     where
         U: Into<UserId>,
     {
@@ -102,22 +99,18 @@ impl Songbird {
     /// [`process`].
     ///
     /// [`process`]: Songbird::process
-    pub fn twilight_from_config<U>(cluster: Cluster, user_id: U, config: Config) -> Self
+    pub fn twilight_from_config<U>(cluster: Arc<Cluster>, user_id: U, config: Config) -> Self
     where
         U: Into<UserId>,
     {
         Self {
             client_data: PRwLock::new(ClientData {
-                shard_count: cluster
-                    .config()
-                    .shard_scheme()
-                    .total()
-                    .unwrap_or_else(|| cluster.shards().len() as u64),
+                shard_count: cluster.config().shard_scheme().total(),
                 initialised: true,
                 user_id: user_id.into(),
             }),
             calls: Default::default(),
-            sharder: Sharder::Twilight(cluster),
+            sharder: Sharder::TwilightCluster(cluster),
             config: Some(config).into(),
         }
     }
@@ -155,7 +148,15 @@ impl Songbird {
     /// This will not join any calls, or cause connection state to change.
     ///
     /// [`Call`]: Call
-    pub fn get_or_insert(&self, guild_id: GuildId) -> Arc<Mutex<Call>> {
+    #[inline]
+    pub fn get_or_insert<G>(&self, guild_id: G) -> Arc<Mutex<Call>>
+    where
+        G: Into<GuildId>,
+    {
+        self._get_or_insert(guild_id.into())
+    }
+
+    fn _get_or_insert(&self, guild_id: GuildId) -> Arc<Mutex<Call>> {
         self.get(guild_id).unwrap_or_else(|| {
             self.calls
                 .entry(guild_id)
@@ -370,7 +371,7 @@ impl Songbird {
                 }
             },
             TwilightEvent::VoiceStateUpdate(v) => {
-                if v.0.user_id.0 != self.client_data.read().user_id.0 {
+                if v.0.user_id.get() != self.client_data.read().user_id.0 {
                     return;
                 }
 
@@ -378,7 +379,7 @@ impl Songbird {
 
                 if let Some(call) = call {
                     let mut handler = call.lock().await;
-                    handler.update_state(v.0.session_id.clone(), v.0.channel_id.map(Into::into));
+                    handler.update_state(v.0.session_id.clone(), v.0.channel_id);
                 }
             },
             _ => {},
@@ -432,10 +433,7 @@ impl VoiceGatewayManager for Songbird {
 
         if let Some(call) = self.get(guild_id) {
             let mut handler = call.lock().await;
-            handler.update_state(
-                voice_state.session_id.clone(),
-                voice_state.channel_id.map(Into::into),
-            );
+            handler.update_state(voice_state.session_id.clone(), voice_state.channel_id);
         }
     }
 }

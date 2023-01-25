@@ -11,6 +11,7 @@ use crate::{
 use audiopus::{
     coder::Decoder as OpusDecoder,
     error::{Error as OpusError, ErrorCode},
+    packet::Packet as OpusPacket,
     Channels,
 };
 use discortp::{
@@ -21,11 +22,8 @@ use discortp::{
     PacketSize,
 };
 use flume::Receiver;
-use std::{collections::HashMap, sync::Arc};
-#[cfg(not(feature = "tokio-02-marker"))]
+use std::{collections::HashMap, convert::TryInto, sync::Arc};
 use tokio::{net::UdpSocket, select};
-#[cfg(feature = "tokio-02-marker")]
-use tokio_compat::{net::udp::RecvHalf, select};
 use tracing::{error, instrument, trace, warn};
 use xsalsa20poly1305::XSalsa20Poly1305 as Cipher;
 
@@ -183,8 +181,11 @@ impl SsrcState {
             let mut out = vec![0; self.decode_size.len()];
 
             for _ in 0..missed_packets {
-                let missing_frame: Option<&[u8]> = None;
-                if let Err(e) = self.decoder.decode(missing_frame, &mut out[..], false) {
+                let missing_frame: Option<OpusPacket> = None;
+                let dest_samples = (&mut out[..])
+                    .try_into()
+                    .expect("Decode logic will cap decode buffer size at i32::MAX.");
+                if let Err(e) = self.decoder.decode(missing_frame, dest_samples, false) {
                     warn!("Issue while decoding for missed packet: {:?}.", e);
                 }
             }
@@ -196,9 +197,11 @@ impl SsrcState {
             // This should scan up to find the "correct" size that a source is using,
             // and then remember that.
             loop {
-                let tried_audio_len =
-                    self.decoder
-                        .decode(Some(&data[start..]), &mut out[..], false);
+                let tried_audio_len = self.decoder.decode(
+                    Some((&data[start..]).try_into()?),
+                    (&mut out[..]).try_into()?,
+                    false,
+                );
 
                 match tried_audio_len {
                     Ok(audio_len) => {
@@ -241,10 +244,7 @@ struct UdpRx {
     packet_buffer: [u8; VOICE_PACKET_MAX],
     rx: Receiver<UdpRxMessage>,
 
-    #[cfg(not(feature = "tokio-02-marker"))]
     udp_socket: Arc<UdpSocket>,
-    #[cfg(feature = "tokio-02-marker")]
-    udp_socket: RecvHalf,
 }
 
 impl UdpRx {
@@ -396,7 +396,6 @@ impl UdpRx {
     }
 }
 
-#[cfg(not(feature = "tokio-02-marker"))]
 #[instrument(skip(interconnect, rx, cipher))]
 pub(crate) async fn runner(
     mut interconnect: Interconnect,
@@ -404,31 +403,6 @@ pub(crate) async fn runner(
     cipher: Cipher,
     config: Config,
     udp_socket: Arc<UdpSocket>,
-) {
-    trace!("UDP receive handle started.");
-
-    let mut state = UdpRx {
-        cipher,
-        decoder_map: Default::default(),
-        config,
-        packet_buffer: [0u8; VOICE_PACKET_MAX],
-        rx,
-        udp_socket,
-    };
-
-    state.run(&mut interconnect).await;
-
-    trace!("UDP receive handle stopped.");
-}
-
-#[cfg(feature = "tokio-02-marker")]
-#[instrument(skip(interconnect, rx, cipher))]
-pub(crate) async fn runner(
-    mut interconnect: Interconnect,
-    rx: Receiver<UdpRxMessage>,
-    cipher: Cipher,
-    config: Config,
-    udp_socket: RecvHalf,
 ) {
     trace!("UDP receive handle started.");
 

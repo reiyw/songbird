@@ -10,14 +10,15 @@ license = "ISC"
 name = "songbird"
 readme = "README.md"
 repository = "https://github.com/serenity-rs/songbird.git"
-version = "0.2.1"
+version = "0.3.0"
 
 [dependencies]
+derivative = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = { version = "0.1", features = ["log"] }
 tracing-futures = "0.2"
-symphonia-core = "0.2"
+symphonia-core = "0.5"
 
 [dependencies.async-trait]
 optional = true
@@ -27,18 +28,11 @@ version = "0.1"
 default-features = false
 features = ["tokio-runtime"]
 optional = true
-version = "0.14"
-
-[dependencies.async-tungstenite-compat]
-package = "async-tungstenite"
-default-features = false
-features = ["tokio-runtime"]
-optional = true
-version = "0.9"
+version = "0.17"
 
 [dependencies.audiopus]
 optional = true
-version = "0.2"
+version = "0.3.0-rc.0"
 
 [dependencies.byteorder]
 optional = true
@@ -46,13 +40,14 @@ version = "1"
 
 [dependencies.dashmap]
 optional = true
-version = "4"
+version = "5"
 
 [dependencies.discortp]
 features = ["discord-full"]
 optional = true
 version = "0.4"
 
+# Temporary hack to pin MSRV.
 [dependencies.flume]
 optional = true
 version = "0.10"
@@ -62,7 +57,7 @@ version = "0.3"
 
 [dependencies.parking_lot]
 optional = true
-version = "0.11"
+version = "0.12"
 
 [dependencies.pin-project]
 optional = true
@@ -74,7 +69,7 @@ version = "0.8"
 
 [dependencies.serenity]
 optional = true
-version = "^0.10.2"
+version = "0.11"
 default-features = false
 features = ["voice", "gateway"]
 
@@ -82,33 +77,23 @@ features = ["voice", "gateway"]
 optional = true
 version = "0.1"
 
-[dependencies.spin_sleep]
-optional = true
-version = "1"
-
 [dependencies.streamcatcher]
 optional = true
-version = "0.1"
+version = "1"
 
 [dependencies.tokio]
 optional = true
 version = "1.0"
 default-features = false
 
-[dependencies.tokio-compat]
-optional = true
-package = "tokio"
-version = "0.2"
-default-features = false
-
 [dependencies.twilight-gateway]
 optional = true
-version = ">=0.5, <0.7"
+version = "0.12.0"
 default-features = false
 
 [dependencies.twilight-model]
 optional = true
-version = ">=0.5, <0.7"
+version = "0.12.0"
 default-features = false
 
 [dependencies.typemap_rev]
@@ -126,7 +111,7 @@ features = ["v4"]
 
 [dependencies.xsalsa20poly1305]
 optional = true
-version = "0.7"
+version = "0.8"
 features = ["std"]
 
 [dev-dependencies]
@@ -172,7 +157,6 @@ driver-core = [
     "parking_lot",
     "rand",
     "serenity-voice-model",
-    "spin_sleep",
     "streamcatcher",
     "typemap_rev",
     "url",
@@ -183,7 +167,7 @@ rustls = ["async-tungstenite/tokio-rustls-webpki-roots", "rustls-marker"]
 native = ["async-tungstenite/tokio-native-tls", "native-marker"]
 serenity-rustls = ["serenity/rustls_backend", "rustls", "gateway", "serenity-deps"]
 serenity-native = ["serenity/native_tls_backend", "native", "gateway", "serenity-deps"]
-twilight-rustls = ["twilight", "twilight-gateway/rustls", "rustls", "gateway"]
+twilight-rustls = ["twilight", "twilight-gateway/rustls-native-roots", "rustls", "gateway"]
 twilight-native = ["twilight", "twilight-gateway/native", "native", "gateway"]
 twilight = ["twilight-model"]
 zlib-simd = ["twilight-gateway/zlib-simd"]
@@ -192,32 +176,6 @@ serenity-deps = ["async-trait"]
 
 rustls-marker = []
 native-marker = []
-
-# Tokio 0.2 Compatibility features
-# These should probably be dropped around the same time as serenity drop them.
-rustls-tokio-02 = ["async-tungstenite-compat/tokio-rustls", "rustls-marker", "tokio-02-marker"]
-native-tokio-02 = ["async-tungstenite-compat/tokio-native-tls", "native-marker", "tokio-02-marker"]
-serenity-rustls-tokio-02 = ["serenity/rustls_tokio_0_2_backend", "rustls-tokio-02", "gateway-tokio-02", "serenity-deps"]
-serenity-native-tokio-02 = ["serenity/native_tls_tokio_0_2_backend", "native-tokio-02", "gateway-tokio-02", "serenity-deps"]
-gateway-tokio-02 = [
-    "gateway-core",
-    "tokio-02-marker",
-    "tokio-compat/sync",
-]
-driver-tokio-02 = [
-    "async-tungstenite-compat",
-    "driver-core",
-    "tokio-02-marker",
-    "tokio-compat/fs",
-    "tokio-compat/io-util",
-    "tokio-compat/macros",
-    "tokio-compat/net",
-    "tokio-compat/process",
-    "tokio-compat/rt-core",
-    "tokio-compat/sync",
-    "tokio-compat/time",
-]
-tokio-02-marker = []
 
 # Behaviour altering features.
 youtube-dlc = []

@@ -58,13 +58,10 @@ use audiopus::coder::GenericCtl;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use cached::OpusCompressor;
 use error::{Error, Result};
-#[cfg(not(feature = "tokio-02-marker"))]
 use tokio::runtime::Handle;
-#[cfg(feature = "tokio-02-marker")]
-use tokio_compat::runtime::Handle;
 
 use std::{
-    convert::TryFrom,
+    convert::{TryFrom, TryInto},
     io::{
         self,
         Error as IoError,
@@ -236,8 +233,8 @@ impl Input {
 
                         let samples = decoder
                             .decode_float(
-                                Some(&opus_data_buffer[..seen]),
-                                &mut decoder_state.current_frame[..],
+                                Some((&opus_data_buffer[..seen]).try_into().unwrap()),
+                                (&mut decoder_state.current_frame[..]).try_into().unwrap(),
                                 false,
                             )
                             .unwrap_or(0);
@@ -379,6 +376,7 @@ impl Seek for Input {
                 SeekFrom::Start(self.container.input_start() as u64),
             )?;
 
+            self.pos = 0;
             self.cheap_consume(target)
         })
         .map(|_| self.pos as u64)
