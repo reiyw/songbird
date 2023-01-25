@@ -434,7 +434,10 @@ impl Mixer {
             )
         };
 
-        self.soft_clip.apply(&mut mix_buffer[..])?;
+        // Hard clip at 0.015
+        for v in mix_buffer[..].iter_mut() {
+            *v = v.clamp(-0.015, 0.015);
+        }
 
         if self.muted {
             mix_len = MixType::MixedPcm(0);
