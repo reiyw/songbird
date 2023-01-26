@@ -74,6 +74,9 @@ pub struct Config {
     ///
     /// Defaults to 10 seconds. If set to `None`, connections will never time out.
     pub driver_timeout: Option<Duration>,
+    /// Threshold value used to hard-clip mixed audio.
+    #[cfg(feature = "driver-core")]
+    pub clip_threshold: f32,
 }
 
 impl Default for Config {
@@ -91,6 +94,8 @@ impl Default for Config {
             driver_retry: Default::default(),
             #[cfg(feature = "driver-core")]
             driver_timeout: Some(Duration::from_secs(10)),
+            #[cfg(feature = "driver-core")]
+            clip_threshold: 0.01,
         }
     }
 }
@@ -132,6 +137,12 @@ impl Config {
         if connected {
             self.crypto_mode = previous.crypto_mode;
         }
+    }
+
+    /// This is used to set peak volume of mixed audio.
+    pub fn clip_threshold(mut self, clip_threshold: f32) -> Self {
+        self.clip_threshold = clip_threshold;
+        self
     }
 }
 

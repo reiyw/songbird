@@ -47,7 +47,8 @@ pub struct Songbird {
     client_data: PRwLock<ClientData>,
     calls: DashMap<GuildId, Arc<Mutex<Call>>>,
     sharder: Sharder,
-    config: PRwLock<Option<Config>>,
+    /// Configuration for drivers and calls.
+    pub config: PRwLock<Option<Config>>,
 }
 
 impl Songbird {

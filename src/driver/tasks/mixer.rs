@@ -426,9 +426,9 @@ impl Mixer {
             )
         };
 
-        // Hard clip at 0.015
+        // Hard clip at config.clip_threshold
         for v in mix_buffer[..].iter_mut() {
-            *v = v.clamp(-0.015, 0.015);
+            *v = v.clamp(-self.config.clip_threshold, self.config.clip_threshold);
         }
 
         if self.muted {
