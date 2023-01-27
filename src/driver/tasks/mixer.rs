@@ -549,10 +549,15 @@ impl Mixer {
 #[inline]
 fn soft_clip(buf: &mut [f32; STEREO_FRAME_SIZE], clip_threshold: f32, sharpness: f32) {
     for x in buf.iter_mut() {
-        *x += ((1.0 + (-sharpness * (*x + clip_threshold)).exp()).ln()
-            - (1.0 + (sharpness * (*x - clip_threshold)).exp()).ln())
-            / sharpness
+        *x += (soft_plus(-sharpness * (*x + clip_threshold))
+            - soft_plus(sharpness * (*x - clip_threshold)))
+            / sharpness;
     }
+}
+
+#[inline]
+fn soft_plus(x: f32) -> f32 {
+    (1.0 + (-x.abs()).exp()).ln() + x.max(0.0)
 }
 
 #[derive(Debug, Eq, PartialEq)]
