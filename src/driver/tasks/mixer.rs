@@ -427,9 +427,15 @@ impl Mixer {
         };
 
         // Hard clip at config.clip_threshold
-        for v in mix_buffer[..].iter_mut() {
-            *v = v.clamp(-self.config.clip_threshold, self.config.clip_threshold);
-        }
+        // for v in mix_buffer[..].iter_mut() {
+        //     *v = v.clamp(-self.config.clip_threshold, self.config.clip_threshold);
+        // }
+
+        soft_clip(
+            &mut mix_buffer,
+            self.config.clip_threshold,
+            self.config.sharpness,
+        );
 
         if self.muted {
             mix_len = MixType::MixedPcm(0);
@@ -537,6 +543,15 @@ impl Mixer {
         rtp.set_timestamp(rtp.get_timestamp() + MONO_FRAME_SIZE as u32);
 
         Ok(())
+    }
+}
+
+#[inline]
+fn soft_clip(buf: &mut [f32; STEREO_FRAME_SIZE], clip_threshold: f32, sharpness: f32) {
+    for x in buf.iter_mut() {
+        *x += ((1.0 + (-sharpness * (*x + clip_threshold)).exp()).ln()
+            - (1.0 + (sharpness * (*x - clip_threshold)).exp()).ln())
+            / sharpness
     }
 }
 

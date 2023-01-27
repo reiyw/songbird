@@ -77,6 +77,9 @@ pub struct Config {
     /// Threshold value used to hard-clip mixed audio.
     #[cfg(feature = "driver-core")]
     pub clip_threshold: f32,
+    /// Sharpness of the clipping function.
+    #[cfg(feature = "driver-core")]
+    pub sharpness: f32,
 }
 
 impl Default for Config {
@@ -96,6 +99,8 @@ impl Default for Config {
             driver_timeout: Some(Duration::from_secs(10)),
             #[cfg(feature = "driver-core")]
             clip_threshold: 0.01,
+            #[cfg(feature = "driver-core")]
+            sharpness: 250.0,
         }
     }
 }
@@ -142,6 +147,12 @@ impl Config {
     /// This is used to set peak volume of mixed audio.
     pub fn clip_threshold(mut self, clip_threshold: f32) -> Self {
         self.clip_threshold = clip_threshold;
+        self
+    }
+
+    /// Sets this `Config`'s sharpness of the clipping function.
+    pub fn sharpness(mut self, sharpness: f32) -> Self {
+        self.sharpness = sharpness;
         self
     }
 }
