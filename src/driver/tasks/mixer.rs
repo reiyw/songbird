@@ -426,15 +426,18 @@ impl Mixer {
             )
         };
 
+        let hard_clip_threshold = self.config.clip_threshold * 100.0;
         for v in mix_buffer[..].iter_mut() {
-            *v = v.clamp(-self.config.clip_threshold, self.config.clip_threshold);
+            *v = v.clamp(-hard_clip_threshold, hard_clip_threshold);
         }
-
         soft_clip(
             &mut mix_buffer,
             self.config.clip_threshold,
             self.config.sharpness,
         );
+        for v in mix_buffer[..].iter_mut() {
+            *v = v.clamp(-self.config.clip_threshold, self.config.clip_threshold);
+        }
 
         if self.muted {
             mix_len = MixType::MixedPcm(0);
