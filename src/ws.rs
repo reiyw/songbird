@@ -10,7 +10,7 @@ use async_tungstenite::{
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use serde_json::Error as JsonError;
 use tokio::time::{timeout, Duration};
-use tracing::{instrument, debug, log::warn};
+use tracing::{debug, instrument};
 
 pub type WsStream = WebSocketStream<ConnectStream>;
 
@@ -114,17 +114,12 @@ impl SenderExt for WsStream {
 #[inline]
 pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Event>> {
     Ok(match message {
-        Some(Message::Text(mut payload)) => {
-            let parsed = serde_json::from_str(payload.as_mut_str());
-
-            if let Err(e) = parsed {
-                warn!("[WS] Trying to parse unknown payload, is Discord adding new shit? {e}");
-
-                return Ok(None);
-            }
-
-            parsed.map(Some)?
-        },
+        Some(Message::Text(payload)) => serde_json::from_str(&payload)
+            .map_err(|e| {
+                debug!("Unexpected JSON {payload:?}.");
+                e
+            })
+            .ok(),
         Some(Message::Binary(bytes)) => {
             return Err(Error::UnexpectedBinaryMessage(bytes));
         },

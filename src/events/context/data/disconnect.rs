@@ -91,12 +91,11 @@ impl From<&ConnectionError> for DisconnectReason {
             CryptoModeInvalid
             | CryptoModeUnavailable
             | EndpointUrl
-            | ExpectedHandshake
             | IllegalDiscoveryResponse
             | IllegalIp
             | Json(_) => Self::ProtocolViolation,
             Io(_) => Self::Io,
-            Crypto(_) | InterconnectFailure(_) => Self::Internal,
+            Crypto(_) | InterconnectFailure(_) | InvalidLength(_) => Self::Internal,
             Ws(ws) => ws.into(),
             TimedOut => Self::TimedOut,
         }
