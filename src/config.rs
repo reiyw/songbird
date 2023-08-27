@@ -150,6 +150,14 @@ pub struct Config {
     pub use_softclip: bool,
 
     #[cfg(feature = "driver")]
+    /// Threshold value used to hard-clip mixed audio.
+    pub clip_threshold: f32,
+
+    #[cfg(feature = "driver")]
+    /// Sharpness of the clipping function.
+    pub clip_sharpness: f32,
+
+    #[cfg(feature = "driver")]
     /// Configures the maximum amount of time to wait for an attempted voice
     /// connection to Discord.
     ///
@@ -228,6 +236,10 @@ impl Default for Config {
             preallocated_tracks: 1,
             #[cfg(feature = "driver")]
             use_softclip: true,
+            #[cfg(feature = "driver")]
+            clip_threshold: 0.01,
+            #[cfg(feature = "driver")]
+            clip_sharpness: 250.0,
             #[cfg(feature = "driver")]
             driver_retry: Retry::default(),
             #[cfg(feature = "driver")]

@@ -557,14 +557,16 @@ impl Mixer {
         } else {
             self.silence_frames = 5;
 
-            if let MixType::MixedPcm(n) = mix_len {
+            if let MixType::MixedPcm(_) = mix_len {
                 if self.config.use_softclip {
-                    self.soft_clip.apply(
-                        (&mut self.sample_buffer.samples_mut()
-                            [..n * self.config.mix_mode.channels()])
-                            .try_into()
-                            .expect("Mix buffer is known to have a valid sample count (softclip)."),
-                    )?;
+                    soft_clip(
+                        self.sample_buffer.samples_mut(),
+                        self.config.clip_threshold,
+                        self.config.clip_sharpness,
+                    );
+                    for v in self.sample_buffer.samples_mut().iter_mut() {
+                        *v = v.clamp(-self.config.clip_threshold, self.config.clip_threshold);
+                    }
                 }
             }
         }
@@ -865,4 +867,18 @@ impl Mixer {
 
         MixType::MixedPcm(len)
     }
+}
+
+#[inline]
+fn soft_clip(buf: &mut [f32], clip_threshold: f32, sharpness: f32) {
+    for x in buf.iter_mut() {
+        *x += (soft_plus(-sharpness * (*x + clip_threshold))
+            - soft_plus(sharpness * (*x - clip_threshold)))
+            / sharpness;
+    }
+}
+
+#[inline]
+fn soft_plus(x: f32) -> f32 {
+    (1.0 + (-x.abs()).exp()).ln() + x.max(0.0)
 }
