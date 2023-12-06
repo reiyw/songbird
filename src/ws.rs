@@ -14,8 +14,10 @@ use tokio_tungstenite::{
     MaybeTlsStream,
     WebSocketStream,
 };
+use futures::{SinkExt, StreamExt, TryStreamExt};
+use serde_json::Error as JsonError;
+use tokio::time::{timeout, Duration};
 use tracing::{debug, instrument};
-use url::Url;
 
 pub struct WsStream(WebSocketStream<MaybeTlsStream<TcpStream>>);
 
@@ -92,18 +94,12 @@ impl From<TungsteniteError> for Error {
 #[allow(unused_unsafe)]
 pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Event>> {
     Ok(match message {
-        // SAFETY:
-        // simd-json::serde::from_str may leave an &mut str in a non-UTF state on failure.
-        // The below is safe as we have taken ownership of the inner `String`, and if
-        // failure occurs we forcibly re-validate its contents before logging.
-        Some(Message::Text(mut payload)) =>
-            (unsafe { crate::json::from_str(payload.as_mut_str()) })
-                .map_err(|e| {
-                    let safe_payload = String::from_utf8_lossy(payload.as_bytes());
-                    debug!("Unexpected JSON: {e}. Payload: {safe_payload}");
-                    e
-                })
-                .ok(),
+        Some(Message::Text(payload)) => serde_json::from_str(&payload)
+            .map_err(|e| {
+                debug!("Unexpected JSON {payload:?}.");
+                e
+            })
+            .ok(),
         Some(Message::Binary(bytes)) => {
             return Err(Error::UnexpectedBinaryMessage(bytes));
         },

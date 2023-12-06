@@ -10,7 +10,6 @@ license = "ISC"
 name = "songbird"
 readme = "README.md"
 repository = "https://github.com/serenity-rs/songbird.git"
-rust-version = "1.72"
 version = "0.3.2"
 
 [dependencies]
@@ -46,11 +45,59 @@ tokio-tungstenite = { optional = true, version = "0.20" }
 tokio-util = { features = ["io"], optional = true, version = "0.7" }
 tracing = { version = "0.1", features = ["log"] }
 tracing-futures = "0.2"
-twilight-gateway = { default-features = false, optional = true, version = "0.15.0" }
-twilight-model = { default-features = false, optional = true, version = "0.15.0" }
-typemap_rev = { optional = true, version = "0.3" }
-url = { optional = true, version = "2" }
-uuid = { features = ["v4"], optional = true, version = "1" }
+symphonia-core = "0.5"
+
+[dependencies.async-trait]
+optional = true
+version = "0.1"
+
+[dependencies.async-tungstenite]
+default-features = false
+features = ["tokio-runtime"]
+optional = true
+version = "0.17"
+
+[dependencies.audiopus]
+optional = true
+version = "0.3.0-rc.0"
+
+[dependencies.byteorder]
+optional = true
+version = "1"
+
+[dependencies.crypto_secretbox]
+optional = true
+version = "0.1.1"
+features = ["std"]
+
+[dependencies.dashmap]
+optional = true
+version = "5"
+
+[dependencies.discortp]
+features = ["discord-full"]
+optional = true
+version = "0.4"
+
+# Temporary hack to pin MSRV.
+[dependencies.flume]
+optional = true
+version = "0.10"
+
+[dependencies.futures]
+version = "0.3"
+
+[dependencies.parking_lot]
+optional = true
+version = "0.12"
+
+[dependencies.pin-project]
+optional = true
+version = "1"
+
+[dependencies.rand]
+optional = true
+version = "0.8"
 
 [dependencies.serenity]
 branch = "next"
@@ -63,6 +110,39 @@ optional = true
 branch = "next"
 git = "https://github.com/serenity-rs/serenity"
 optional = true
+version = "0.1"
+
+[dependencies.streamcatcher]
+optional = true
+version = "1"
+
+[dependencies.tokio]
+optional = true
+version = "1.0"
+default-features = false
+
+[dependencies.twilight-gateway]
+optional = true
+version = "0.12.0"
+default-features = false
+
+[dependencies.twilight-model]
+optional = true
+version = "0.12.0"
+default-features = false
+
+[dependencies.typemap_rev]
+optional = true
+version = "0.1"
+
+[dependencies.url]
+optional = true
+version = "2"
+
+[dependencies.uuid]
+optional = true
+version = "0.8"
+features = ["v4"]
 
 [dev-dependencies]
 byteorder = "1"
@@ -125,11 +205,20 @@ driver = [
     "tokio?/sync",
     "tokio?/time",
 ]
-rustls = [
-    "reqwest?/rustls-tls",
-    "serenity?/rustls_backend",
-    "tokio-tungstenite?/rustls-tls-webpki-roots",
-    "twilight-gateway?/rustls-native-roots",
+driver-core = [
+    "async-trait",
+    "audiopus",
+    "byteorder",
+    "crypto_secretbox",
+    "discortp",
+    "flume",
+    "parking_lot",
+    "rand",
+    "serenity-voice-model",
+    "streamcatcher",
+    "typemap_rev",
+    "url",
+    "uuid",
 ]
 native = [
     "reqwest?/native-tls",

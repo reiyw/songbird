@@ -344,8 +344,16 @@ impl Input {
         if let Self::Live(input, _) = self {
             Some(input)
         } else {
-            None
-        }
+            // start from scratch, then seek in...
+            Seek::seek(
+                &mut self.reader,
+                SeekFrom::Start(self.container.input_start() as u64),
+            )?;
+
+            self.pos = 0;
+            self.cheap_consume(target)
+        })
+        .map(|_| self.pos as u64)
     }
 
     /// Returns a mutable reference to the live input, if it been created via

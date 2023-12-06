@@ -32,6 +32,12 @@ use tokio::{net::UdpSocket, spawn, time::timeout};
 use tracing::{debug, info, instrument};
 use url::Url;
 
+#[cfg(all(feature = "rustls-marker", not(feature = "native-marker")))]
+use ws::create_rustls_client;
+
+#[cfg(feature = "native-marker")]
+use ws::create_native_tls_client;
+
 pub(crate) struct Connection {
     pub(crate) info: ConnectionInfo,
     pub(crate) ssrc: u32,

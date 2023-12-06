@@ -44,7 +44,7 @@ pub use test_config::*;
 pub use test_impls::*;
 
 #[cfg(feature = "builtin-queue")]
-use crate::tracks::TrackQueue;
+use crate::tracks::{self, TrackQueue};
 use crate::{
     events::EventData,
     input::Input,

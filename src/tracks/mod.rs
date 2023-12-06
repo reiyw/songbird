@@ -162,7 +162,21 @@ impl Track {
         self
     }
 
-    #[must_use]
+    /// Returns the current volume.
+    pub fn volume(&self) -> f32 {
+        self.volume
+    }
+
+    /// Returns the current playback position.
+    pub fn position(&self) -> Duration {
+        self.position
+    }
+
+    /// Returns the total length of time this track has been active.
+    pub fn play_time(&self) -> Duration {
+        self.play_time
+    }
+
     /// Set an audio track to loop a set number of times.
     pub fn loops(mut self, loops: LoopState) -> Self {
         self.loops = loops;

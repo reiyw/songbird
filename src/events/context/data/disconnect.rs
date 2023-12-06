@@ -85,18 +85,17 @@ pub enum DisconnectReason {
 impl From<&ConnectionError> for DisconnectReason {
     fn from(e: &ConnectionError) -> Self {
         match e {
-            ConnectionError::AttemptDiscarded => Self::AttemptDiscarded,
-            ConnectionError::CryptoInvalidLength
-            | ConnectionError::CryptoModeInvalid
-            | ConnectionError::CryptoModeUnavailable
-            | ConnectionError::EndpointUrl
-            | ConnectionError::IllegalDiscoveryResponse
-            | ConnectionError::IllegalIp
-            | ConnectionError::Json(_) => Self::ProtocolViolation,
-            ConnectionError::Io(_) => Self::Io,
-            ConnectionError::Crypto(_) | ConnectionError::InterconnectFailure(_) => Self::Internal,
-            ConnectionError::Ws(ws) => ws.into(),
-            ConnectionError::TimedOut => Self::TimedOut,
+            AttemptDiscarded => Self::AttemptDiscarded,
+            CryptoModeInvalid
+            | CryptoModeUnavailable
+            | EndpointUrl
+            | IllegalDiscoveryResponse
+            | IllegalIp
+            | Json(_) => Self::ProtocolViolation,
+            Io(_) => Self::Io,
+            Crypto(_) | InterconnectFailure(_) | InvalidLength(_) => Self::Internal,
+            Ws(ws) => ws.into(),
+            TimedOut => Self::TimedOut,
         }
     }
 }

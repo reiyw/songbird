@@ -10,8 +10,6 @@ use crate::{
 };
 use crypto_secretbox::XSalsa20Poly1305 as Cipher;
 use flume::Sender;
-use std::{net::UdpSocket, sync::Arc};
-use symphonia_core::{errors::Error as SymphoniaError, formats::SeekedTo};
 
 pub struct MixerConnection {
     pub cipher: Cipher,

@@ -4,7 +4,7 @@ use crate::{
     driver::tasks::{error::Recipient, message::*},
     ws::Error as WsError,
 };
-use crypto_secretbox::Error as CryptoError;
+use crypto_secretbox::{cipher::InvalidLength, Error as CryptoError};
 use flume::SendError;
 use serde_json::Error as JsonError;
 use std::{error::Error as StdError, fmt, io::Error as IoError};
@@ -19,8 +19,8 @@ pub enum Error {
     AttemptDiscarded,
     /// An error occurred during [en/de]cryption of voice packets.
     Crypto(CryptoError),
-    /// The symmetric key supplied by Discord had the wrong size.
-    CryptoInvalidLength,
+    /// Invalid length error while generating crypto keys
+    InvalidLength(InvalidLength),
     /// Server did not return the expected crypto mode during negotiation.
     CryptoModeInvalid,
     /// Selected crypto mode was not offered by server.
@@ -91,24 +91,29 @@ impl From<Elapsed> for Error {
     }
 }
 
+impl From<InvalidLength> for Error {
+    fn from(value: InvalidLength) -> Self {
+        Error::InvalidLength(value)
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "failed to connect to Discord RTP server: ")?;
         match self {
-            Self::AttemptDiscarded => write!(f, "connection attempt was aborted/discarded"),
-            Self::Crypto(e) => e.fmt(f),
-            Self::CryptoInvalidLength => write!(f, "server supplied key of wrong length"),
-            Self::CryptoModeInvalid => write!(f, "server changed negotiated encryption mode"),
-            Self::CryptoModeUnavailable => write!(f, "server did not offer chosen encryption mode"),
-            Self::EndpointUrl => write!(f, "endpoint URL received from gateway was invalid"),
-            Self::IllegalDiscoveryResponse =>
-                write!(f, "IP discovery/NAT punching response was invalid"),
-            Self::IllegalIp => write!(f, "IP discovery/NAT punching response had bad IP value"),
-            Self::Io(e) => e.fmt(f),
-            Self::Json(e) => e.fmt(f),
-            Self::InterconnectFailure(e) => write!(f, "failed to contact other task ({e:?})"),
-            Self::Ws(e) => write!(f, "websocket issue ({e:?})."),
-            Self::TimedOut => write!(f, "connection attempt timed out"),
+            AttemptDiscarded => write!(f, "connection attempt was aborted/discarded"),
+            Crypto(e) => e.fmt(f),
+            InvalidLength(e) => e.fmt(f),
+            CryptoModeInvalid => write!(f, "server changed negotiated encryption mode"),
+            CryptoModeUnavailable => write!(f, "server did not offer chosen encryption mode"),
+            EndpointUrl => write!(f, "endpoint URL received from gateway was invalid"),
+            IllegalDiscoveryResponse => write!(f, "IP discovery/NAT punching response was invalid"),
+            IllegalIp => write!(f, "IP discovery/NAT punching response had bad IP value"),
+            Io(e) => e.fmt(f),
+            Json(e) => e.fmt(f),
+            InterconnectFailure(e) => write!(f, "failed to contact other task ({:?})", e),
+            Ws(e) => write!(f, "websocket issue ({:?}).", e),
+            TimedOut => write!(f, "connection attempt timed out"),
         }
     }
 }
@@ -127,6 +132,12 @@ impl StdError for Error {
             | Error::Ws(_)
             | Error::TimedOut => None,
             Error::Crypto(e) => e.source(),
+            Error::InvalidLength(v) => v.source(),
+            Error::CryptoModeInvalid => None,
+            Error::CryptoModeUnavailable => None,
+            Error::EndpointUrl => None,
+            Error::IllegalDiscoveryResponse => None,
+            Error::IllegalIp => None,
             Error::Io(e) => e.source(),
             Error::Json(e) => e.source(),
         }

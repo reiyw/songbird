@@ -6,9 +6,9 @@ use super::*;
 #[non_exhaustive]
 /// Audio data from all users in a voice channel, fired every 20ms.
 ///
-/// Songbird implements a jitter buffer to sycnhronise user packets, smooth out network latency, and
-/// handle packet reordering by the network. Packet playout  via this event is delayed by approximately
-/// [`Config::playout_buffer_length`]` * 20ms` from its original arrival.
+/// Valid audio data (`Some(audio)` where `audio.len >= 0`) contains up to 20ms of 16-bit stereo PCM audio
+/// at 48kHz, using native endianness. Songbird will not send audio for silent regions, these should
+/// be inferred using [`SpeakingUpdate`]s (and filled in by the user if required using arrays of zeroes).
 ///
 /// [`Config::playout_buffer_length`]: crate::Config::playout_buffer_length
 pub struct VoiceTick {
