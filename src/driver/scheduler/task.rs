@@ -38,6 +38,7 @@ impl<T> IsEnabled for ResId<T> {}
 
 #[allow(missing_docs)]
 impl<T: Copy> ResId<T> {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -49,6 +50,7 @@ impl<T: Copy> ResId<T> {
     }
 
     #[cfg(any(test, feature = "internals"))]
+    #[must_use]
     pub fn get(self) -> u64 {
         self.0
     }
@@ -88,6 +90,7 @@ pub struct ParkedMixer {
 #[allow(missing_docs)]
 impl ParkedMixer {
     /// Create a new `Mixer` in a parked state.
+    #[must_use]
     pub fn new(mix_rx: Receiver<MixerMessage>, interconnect: Interconnect, config: Config) -> Self {
         Self {
             mixer: Box::new(Mixer::new(mix_rx, Handle::current(), interconnect, config)),
@@ -116,7 +119,7 @@ impl ParkedMixer {
                     _ = kill_rx.recv_async() => break,
                     msg = remote_rx.recv_async() => {
                         let exit = if let Ok(msg) = msg {
-                            let remove_self = msg.is_mixer_now_live();
+                            let remove_self = msg.is_mixer_maybe_live();
                             tx.send_async(SchedulerMessage::Do(id, msg)).await.is_err() || remove_self
                         } else {
                             true
@@ -135,7 +138,8 @@ impl ParkedMixer {
     pub fn handle_message(&mut self, msg: MixerMessage) -> Result<bool, ()> {
         match msg {
             MixerMessage::SetConn(conn, ssrc) => {
-                // Overridden because
+                // Overridden because payload-specific fields are carried
+                // externally on `ParkedMixer`.
                 self.ssrc = ssrc;
                 self.rtp_sequence = random::<u16>();
                 self.rtp_timestamp = random::<u32>();

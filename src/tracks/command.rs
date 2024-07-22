@@ -1,10 +1,7 @@
 use super::*;
 use crate::events::EventData;
 use flume::Sender;
-use std::{
-    fmt::{Debug, Formatter, Result as FmtResult},
-    time::Duration,
-};
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 
 /// A request from external code using a [`TrackHandle`] to modify
 /// or act upon an [`Track`] object.
@@ -28,7 +25,7 @@ pub enum TrackCommand {
     /// Register an event on this track.
     AddEvent(EventData),
     /// Run some closure on this track, with direct access to the core object.
-    Do(Box<dyn FnOnce(View) -> Option<Action> + Send + Sync + 'static>),
+    Do(Box<dyn FnOnce(View<'_>) -> Option<Action> + Send + Sync + 'static>),
     /// Request a copy of this track's state.
     Request(Sender<TrackState>),
     /// Change the loop count/strategy of this track.
