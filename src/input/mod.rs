@@ -44,13 +44,12 @@
 //! [`Read`]: https://doc.rust-lang.org/std/io/trait.Read.html
 //! [`Compressed`]: cached::Compressed
 //! [DCA1]: https://github.com/bwmarrin/dca
-//! [`registry::*`]: registry
 //! [`cached::*`]: cached
 //! [`OpusDecoder`]: codecs::OpusDecoder
 //! [`DcaReader`]: codecs::DcaReader
 //! [`RawReader`]: codecs::RawReader
-//! [format]: static@codecs::PROBE
-//! [codec registries]: static@codecs::CODEC_REGISTRY
+//! [format]: codecs::get_probe
+//! [codec registries]: codecs::get_codec_registry
 
 mod adapters;
 mod audiostream;
@@ -60,7 +59,7 @@ mod error;
 #[cfg(test)]
 pub mod input_tests;
 mod live_input;
-mod metadata;
+pub mod metadata;
 mod parsed;
 mod sources;
 pub mod utils;
@@ -71,7 +70,7 @@ pub use self::{
     compose::*,
     error::*,
     live_input::*,
-    metadata::*,
+    metadata::{AuxMetadata, Metadata},
     parsed::*,
     sources::*,
 };
@@ -114,7 +113,7 @@ use tokio::runtime::Handle as TokioHandle;
 /// let mut lazy = YoutubeDl::new(
 ///     reqwest::Client::new(),
 ///     // Referenced under CC BY-NC-SA 3.0 -- https://creativecommons.org/licenses/by-nc-sa/3.0/
-///     "https://cloudkicker.bandcamp.com/track/94-days".to_string(),
+///     "https://cloudkicker.bandcamp.com/track/94-days",
 /// );
 /// let lazy_c = lazy.clone();
 ///
@@ -147,7 +146,7 @@ use tokio::runtime::Handle as TokioHandle;
 /// //
 /// // We can access it on a live track using `TrackHandle::action()`.
 /// in_memory_input = in_memory_input
-///     .make_playable_async(&CODEC_REGISTRY, &PROBE)
+///     .make_playable_async(get_codec_registry(), get_probe())
 ///     .await
 ///     .expect("WAV support is included, and this file is good!");
 ///

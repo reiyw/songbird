@@ -2,7 +2,7 @@ use super::{compressed_cost_per_sec, default_config, CodecCacheError, ToAudioByt
 use crate::{
     constants::*,
     input::{
-        codecs::{dca::*, CODEC_REGISTRY, PROBE},
+        codecs::{dca::*, get_codec_registry, get_probe},
         AudioStream,
         Input,
         LiveInput,
@@ -52,17 +52,13 @@ use tracing::{debug, trace};
 pub struct Config {
     /// Registry of audio codecs supported by the driver.
     ///
-    /// Defaults to [`CODEC_REGISTRY`], which adds audiopus-based Opus codec support
+    /// Defaults to [`get_codec_registry`], which adds audiopus-based Opus codec support
     /// to all of Symphonia's default codecs.
-    ///
-    /// [`CODEC_REGISTRY`]: static@CODEC_REGISTRY
     pub codec_registry: &'static CodecRegistry,
     /// Registry of the muxers and container formats supported by the driver.
     ///
-    /// Defaults to [`PROBE`], which includes all of Symphonia's default format handlers
+    /// Defaults to [`get_probe`], which includes all of Symphonia's default format handlers
     /// and DCA format support.
-    ///
-    /// [`PROBE`]: static@PROBE
     pub format_registry: &'static Probe,
     /// Configuration for the inner streamcatcher instance.
     ///
@@ -73,8 +69,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            codec_registry: &CODEC_REGISTRY,
-            format_registry: &PROBE,
+            codec_registry: get_codec_registry(),
+            format_registry: get_probe(),
             streamcatcher: ScConfig::default(),
         }
     }
@@ -200,7 +196,7 @@ impl Compressed {
         )?;
         let mut metabytes = b"DCA1\0\0\0\0".to_vec();
         let orig_len = metabytes.len();
-        crate::json::to_writer(&mut metabytes, &metadata)?;
+        serde_json::to_writer(&mut metabytes, &metadata)?;
         let meta_len = (metabytes.len() - orig_len)
             .try_into()
             .map_err(|_| CodecCacheError::MetadataTooLarge)?;
@@ -438,7 +434,7 @@ where
                         },
                         Err(e) => {
                             debug!("Read error {:?} {:?} {:?}.", e, out, raw_len);
-                            out = Some(Err(IoError::new(IoErrorKind::Other, e)));
+                            out = Some(Err(IoError::other(e)));
                             break;
                         },
                     }
@@ -476,7 +472,7 @@ where
 
         // NOTE: use of raw_len here preserves true sample length even if
         // stream is extended to 20ms boundary.
-        out.unwrap_or_else(|| Err(IoError::new(IoErrorKind::Other, "Unclear.")))
+        out.unwrap_or_else(|| Err(IoError::other("Unclear.")))
             .map(|compressed_sz| {
                 self.audio_bytes
                     .fetch_add(raw_len * mem::size_of::<f32>(), Ordering::Release);

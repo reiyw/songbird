@@ -9,4 +9,16 @@ compile_error!(
     If you are unsure, go with `rustls`."
 );
 
+#[cfg(any(
+    all(feature = "driver", feature = "tws", feature = "tungstenite"),
+    all(feature = "driver", not(feature = "tws"), not(feature = "tungstenite"))
+))]
+compile_error!(
+    "You have the `driver` feature enabled: \
+    this requires you specify either: \n\
+    - `tungstenite` (recommended with serenity)\n\
+    - or `tws` (recommended with twilight).\n\
+    You have either specified none, or both - choose exactly one."
+);
+
 fn main() {}

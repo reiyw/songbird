@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 #[cfg(feature = "serenity")]
 use futures::channel::mpsc::UnboundedSender as Sender;
-use once_cell::sync::OnceCell;
 use parking_lot::RwLock as PRwLock;
 #[cfg(feature = "serenity")]
 use serenity::{
@@ -23,7 +22,7 @@ use serenity::{
         voice::VoiceState,
     },
 };
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 #[cfg(feature = "serenity")]
 use tracing::debug;
@@ -44,7 +43,7 @@ struct ClientData {
 /// [`Call`]: Call
 #[derive(Debug)]
 pub struct Songbird {
-    client_data: OnceCell<ClientData>,
+    client_data: OnceLock<ClientData>,
     calls: DashMap<GuildId, Arc<Mutex<Call>>>,
     sharder: Sharder,
     config: PRwLock<Config>,
@@ -71,7 +70,7 @@ impl Songbird {
     #[must_use]
     pub fn serenity_from_config(config: Config) -> Arc<Self> {
         Arc::new(Self {
-            client_data: OnceCell::new(),
+            client_data: OnceLock::new(),
             calls: DashMap::new(),
             sharder: Sharder::Serenity(SerenitySharder::default()),
             config: config.initialise_disposer().into(),
@@ -110,7 +109,7 @@ impl Songbird {
         U: Into<UserId>,
     {
         Self {
-            client_data: OnceCell::with_value(ClientData {
+            client_data: OnceLock::from(ClientData {
                 shard_count: sender_map.shard_count(),
                 user_id: user_id.into(),
             }),
@@ -155,36 +154,34 @@ impl Songbird {
     where
         G: Into<GuildId>,
     {
-        self._get_or_insert(guild_id.into())
+        self.get_or_insert_inner(guild_id.into())
     }
 
-    fn _get_or_insert(&self, guild_id: GuildId) -> Arc<Mutex<Call>> {
-        self.get(guild_id).unwrap_or_else(|| {
-            self.calls
-                .entry(guild_id)
-                .or_insert_with(|| {
-                    let info = self
-                        .client_data
-                        .get()
-                        .expect("Manager has not been initialised");
+    fn get_or_insert_inner(&self, guild_id: GuildId) -> Arc<Mutex<Call>> {
+        self.calls
+            .entry(guild_id)
+            .or_insert_with(|| {
+                let info = self
+                    .client_data
+                    .get()
+                    .expect("Manager has not been initialised");
 
-                    let shard = shard_id(guild_id.0.get(), info.shard_count);
-                    let shard_handle = self
-                        .sharder
-                        .get_shard(shard)
-                        .expect("Failed to get shard handle: shard_count incorrect?");
+                let shard = shard_id(guild_id.0.get(), info.shard_count);
+                let shard_handle = self
+                    .sharder
+                    .get_shard(shard)
+                    .expect("Failed to get shard handle: shard_count incorrect?");
 
-                    let call = Call::from_config(
-                        guild_id,
-                        shard_handle,
-                        info.user_id,
-                        self.config.read().clone(),
-                    );
+                let call = Call::from_config(
+                    guild_id,
+                    shard_handle,
+                    info.user_id,
+                    self.config.read().clone(),
+                );
 
-                    Arc::new(Mutex::new(call))
-                })
-                .clone()
-        })
+                Arc::new(Mutex::new(call))
+            })
+            .clone()
     }
 
     /// Creates an iterator for all [`Call`]s currently managed.
@@ -236,11 +233,11 @@ impl Songbird {
         C: Into<ChannelId>,
         G: Into<GuildId>,
     {
-        self._join(guild_id.into(), channel_id.into()).await
+        self.join_inner(guild_id.into(), channel_id.into()).await
     }
 
     #[cfg(feature = "driver")]
-    async fn _join(
+    async fn join_inner(
         &self,
         guild_id: GuildId,
         channel_id: ChannelId,
@@ -278,10 +275,11 @@ impl Songbird {
         C: Into<ChannelId>,
         G: Into<GuildId>,
     {
-        self._join_gateway(guild_id.into(), channel_id.into()).await
+        self.join_gateway_inner(guild_id.into(), channel_id.into())
+            .await
     }
 
-    async fn _join_gateway(
+    async fn join_gateway_inner(
         &self,
         guild_id: GuildId,
         channel_id: ChannelId,
@@ -319,10 +317,10 @@ impl Songbird {
     /// [`remove`]: Songbird::remove
     #[inline]
     pub async fn leave<G: Into<GuildId>>(&self, guild_id: G) -> JoinResult<()> {
-        self._leave(guild_id.into()).await
+        self.leave_inner(guild_id.into()).await
     }
 
-    async fn _leave(&self, guild_id: GuildId) -> JoinResult<()> {
+    async fn leave_inner(&self, guild_id: GuildId) -> JoinResult<()> {
         if let Some(call) = self.get(guild_id) {
             let mut handler = call.lock().await;
             handler.leave().await
@@ -342,10 +340,10 @@ impl Songbird {
     /// [`Call`]: Call
     #[inline]
     pub async fn remove<G: Into<GuildId>>(&self, guild_id: G) -> JoinResult<()> {
-        self._remove(guild_id.into()).await
+        self.remove_inner(guild_id.into()).await
     }
 
-    async fn _remove(&self, guild_id: GuildId) -> JoinResult<()> {
+    async fn remove_inner(&self, guild_id: GuildId) -> JoinResult<()> {
         self.leave(guild_id).await?;
         self.calls.remove(&guild_id);
         Ok(())
@@ -477,7 +475,7 @@ pub struct Iter<'a> {
     inner: InnerIter<'a>,
 }
 
-impl<'a> Iterator for Iter<'a> {
+impl Iterator for Iter<'_> {
     type Item = (GuildId, Arc<Mutex<Call>>);
 
     fn next(&mut self) -> Option<Self::Item> {

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use flume::{Receiver, RecvError, Sender, TryRecvError};
 use futures::{future::Either, stream::FuturesUnordered, FutureExt, StreamExt};
 use parking_lot::Mutex;
-use ringbuf::{traits::*, *};
+use ringbuf::{storage::Heap, traits::*, *};
 use std::{
     io::{
         Error as IoError,
@@ -35,7 +35,7 @@ struct AsyncAdapterSink {
 
 impl AsyncAdapterSink {
     async fn launch(mut self) {
-        let mut inner_buf = [0u8; 32 * 1024];
+        let mut inner_buf = vec![0u8; 32 * 1024].into_boxed_slice();
         let mut read_region = 0..0;
         let mut hit_end = false;
         let mut blocked = false;
@@ -156,7 +156,7 @@ impl AsyncAdapterStream {
     /// between the async and sync halves.
     #[must_use]
     pub fn new(stream: Box<dyn AsyncMediaSource>, buf_len: usize) -> AsyncAdapterStream {
-        let (bytes_in, bytes_out) = SharedRb::new(buf_len).split();
+        let (bytes_in, bytes_out) = SharedRb::<Heap<_>>::new(buf_len).split();
         let bytes_out = bytes_out.into();
         let (resp_tx, resp_rx) = flume::unbounded();
         let (req_tx, req_rx) = flume::unbounded();

@@ -35,7 +35,6 @@ jobs:
           - Windows
           - driver only
           - gateway only
-          - simd json
         include:
           - name: beta
             toolchain: beta
@@ -48,14 +47,10 @@ jobs:
             os: windows-latest
             dont-test: true
           - name: driver only
-            features: driver rustls
+            features: driver tungstenite rustls
             dont-test: true
           - name: gateway only
-            features: gateway serenity rustls
-            dont-test: true
-          - name: simd json
-            features: simd-json serenity rustls driver gateway serenity?/simd_json
-            rustflags: -C target-cpu=native
+            features: gateway serenity tungstenite rustls
             dont-test: true
     steps:
       - name: Checkout sources
@@ -112,7 +107,7 @@ jobs:
           sudo apt-get install -y libopus-dev
       - name: Build docs
         env:
-          RUSTDOCFLAGS: -D broken_intra_doc_links
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
         run: |
           cargo doc --no-deps --features full-doc
 

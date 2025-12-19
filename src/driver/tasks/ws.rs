@@ -12,7 +12,7 @@ use crate::{
     ConnectionInfo,
 };
 use flume::Receiver;
-use rand::random;
+use rand::{distr::Uniform, Rng};
 #[cfg(feature = "receive")]
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +20,7 @@ use tokio::{
     select,
     time::{sleep_until, Instant},
 };
+#[cfg(feature = "tungstenite")]
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tracing::{debug, info, instrument, trace, warn};
 
@@ -145,6 +146,9 @@ impl AuxNetwork {
                                 }
                             }
                         },
+                        Ok(WsMessage::Deliver(msg)) => {
+                            self.process_ws(interconnect, msg);
+                        },
                         Err(flume::RecvError::Disconnected) => {
                             break;
                         },
@@ -174,7 +178,12 @@ impl AuxNetwork {
     }
 
     async fn send_heartbeat(&mut self) -> Result<(), WsError> {
-        let nonce = random::<u64>();
+        // Discord have suddenly, mysteriously, started rejecting
+        // ints-as-strings. Keep JS happy here, I suppose...
+        const JS_MAX_INT: u64 = (1u64 << 53) - 1;
+        let nonce_range =
+            Uniform::new(0, JS_MAX_INT).expect("uniform range is finite and nonempty");
+        let nonce = rand::rng().sample(nonce_range);
         self.last_heartbeat_nonce = Some(nonce);
 
         trace!("Sent heartbeat {:?}", self.speaking);
@@ -241,9 +250,20 @@ pub(crate) async fn runner(mut interconnect: Interconnect, mut aux: AuxNetwork) 
 
 fn ws_error_is_not_final(err: &WsError) -> bool {
     match err {
+        #[cfg(feature = "tungstenite")]
         WsError::WsClosed(Some(frame)) => match frame.code {
             CloseCode::Library(l) =>
                 if let Some(code) = VoiceCloseCode::from_u16(l) {
+                    code.should_resume()
+                } else {
+                    true
+                },
+            _ => true,
+        },
+        #[cfg(feature = "tws")]
+        WsError::WsClosed(Some(code)) => match (*code).into() {
+            code @ 4000..=4999_u16 =>
+                if let Some(code) = VoiceCloseCode::from_u16(code) {
                     code.should_resume()
                 } else {
                     true

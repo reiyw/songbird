@@ -4,7 +4,7 @@ use crate::{
     driver::tasks::{error::Recipient, message::*},
     ws::Error as WsError,
 };
-use crypto_secretbox::Error as CryptoError;
+use aes_gcm::Error as CryptoError;
 use flume::SendError;
 use serde_json::Error as JsonError;
 use std::{error::Error as StdError, fmt, io::Error as IoError};
@@ -118,6 +118,7 @@ impl StdError for Error {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Error::AttemptDiscarded
+            | Error::Crypto(_)
             | Error::CryptoInvalidLength
             | Error::CryptoModeInvalid
             | Error::CryptoModeUnavailable
@@ -127,7 +128,6 @@ impl StdError for Error {
             | Error::InterconnectFailure(_)
             | Error::Ws(_)
             | Error::TimedOut => None,
-            Error::Crypto(e) => e.source(),
             Error::Io(e) => e.source(),
             Error::Json(e) => e.source(),
         }

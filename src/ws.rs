@@ -1,10 +1,12 @@
 use crate::{error::JsonError, model::Event};
 
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use tokio::{
     net::TcpStream,
     time::{timeout, Duration},
 };
+#[cfg(feature = "tungstenite")]
 use tokio_tungstenite::{
     tungstenite::{
         error::Error as TungsteniteError,
@@ -12,6 +14,15 @@ use tokio_tungstenite::{
         Message,
     },
     MaybeTlsStream,
+    WebSocketStream,
+};
+#[cfg(feature = "tws")]
+use tokio_websockets::{
+    CloseCode,
+    Error as TwsError,
+    Limits,
+    MaybeTlsStream,
+    Message,
     WebSocketStream,
 };
 use tracing::{debug, instrument};
@@ -22,16 +33,24 @@ pub struct WsStream(WebSocketStream<MaybeTlsStream<TcpStream>>);
 impl WsStream {
     #[instrument]
     pub(crate) async fn connect(url: Url) -> Result<Self> {
-        let (stream, _) = tokio_tungstenite::connect_async_with_config(
-            url.to_string(),
-            Some(Config {
-                max_message_size: None,
-                max_frame_size: None,
-                ..Default::default()
-            }),
+        #[cfg(feature = "tungstenite")]
+        let (stream, _) = tokio_tungstenite::connect_async_with_config::<Url>(
+            url,
+            Some(
+                Config::default()
+                    .max_message_size(None)
+                    .max_frame_size(None),
+            ),
             true,
         )
         .await?;
+        #[cfg(feature = "tws")]
+        let (stream, _) = tokio_websockets::ClientBuilder::new()
+            .limits(Limits::unlimited())
+            .uri(url.as_str())
+            .unwrap() // Any valid URL is a valid URI.
+            .connect()
+            .await?;
 
         Ok(Self(stream))
     }
@@ -53,11 +72,9 @@ impl WsStream {
     }
 
     pub(crate) async fn send_json(&mut self, value: &Event) -> Result<()> {
-        Ok(crate::json::to_string(value)
-            .map(Message::Text)
-            .map_err(Error::from)
-            .map(|m| self.0.send(m))?
-            .await?)
+        let res = crate::json::to_string(value);
+        let res = res.map(Message::text);
+        Ok(res.map_err(Error::from).map(|m| self.0.send(m))?.await?)
     }
 }
 
@@ -69,11 +86,17 @@ pub enum Error {
 
     /// The discord voice gateway does not support or offer zlib compression.
     /// As a result, only text messages are expected.
-    UnexpectedBinaryMessage(Vec<u8>),
+    UnexpectedBinaryMessage(Bytes),
 
+    #[cfg(feature = "tungstenite")]
     Ws(TungsteniteError),
+    #[cfg(feature = "tws")]
+    Ws(TwsError),
 
-    WsClosed(Option<CloseFrame<'static>>),
+    #[cfg(feature = "tungstenite")]
+    WsClosed(Option<CloseFrame>),
+    #[cfg(feature = "tws")]
+    WsClosed(Option<CloseCode>),
 }
 
 impl From<JsonError> for Error {
@@ -82,28 +105,25 @@ impl From<JsonError> for Error {
     }
 }
 
+#[cfg(feature = "tungstenite")]
 impl From<TungsteniteError> for Error {
     fn from(e: TungsteniteError) -> Error {
         Error::Ws(e)
     }
 }
 
+#[cfg(feature = "tws")]
+impl From<TwsError> for Error {
+    fn from(e: TwsError) -> Self {
+        Error::Ws(e)
+    }
+}
+
 #[inline]
-#[allow(unused_unsafe)]
 pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Event>> {
-    Ok(match message {
-        // SAFETY:
-        // simd-json::serde::from_str may leave an &mut str in a non-UTF state on failure.
-        // The below is safe as we have taken ownership of the inner `String`, and if
-        // failure occurs we forcibly re-validate its contents before logging.
-        Some(Message::Text(mut payload)) =>
-            (unsafe { crate::json::from_str(payload.as_mut_str()) })
-                .map_err(|e| {
-                    let safe_payload = String::from_utf8_lossy(payload.as_bytes());
-                    debug!("Unexpected JSON: {e}. Payload: {safe_payload}");
-                    e
-                })
-                .ok(),
+    #[cfg(feature = "tungstenite")]
+    let text = match message {
+        Some(Message::Text(ref payload)) => payload,
         Some(Message::Binary(bytes)) => {
             return Err(Error::UnexpectedBinaryMessage(bytes));
         },
@@ -111,6 +131,32 @@ pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Even
             return Err(Error::WsClosed(Some(frame)));
         },
         // Ping/Pong message behaviour is internally handled by tungstenite.
-        _ => None,
-    })
+        _ => return Ok(None),
+    };
+    #[cfg(feature = "tws")]
+    let text = match message {
+        Some(ref message) if message.is_text() =>
+            if let Some(text) = message.as_text() {
+                text
+            } else {
+                return Ok(None);
+            },
+        Some(message) if message.is_binary() => {
+            return Err(Error::UnexpectedBinaryMessage(
+                message.into_payload().into(),
+            ));
+        },
+        Some(message) if message.is_close() => {
+            return Err(Error::WsClosed(message.as_close().map(|(c, _)| c)));
+        },
+        // ping/pong; will also be internally handled by tokio-websockets.
+        _ => return Ok(None),
+    };
+
+    Ok(serde_json::from_str(text)
+        .map_err(|e| {
+            debug!("Unexpected JSON: {e}. Payload: {text}");
+            e
+        })
+        .ok())
 }

@@ -3,6 +3,7 @@ pub mod error;
 #[cfg(feature = "receive")]
 use super::tasks::udp_rx;
 use super::{
+    crypto::Cipher,
     tasks::{
         message::*,
         ws::{self as ws_task, AuxNetwork},
@@ -20,7 +21,6 @@ use crate::{
     ws::WsStream,
     ConnectionInfo,
 };
-use crypto_secretbox::{KeyInit, XSalsa20Poly1305 as Cipher};
 use discortp::discord::{IpDiscoveryPacket, IpDiscoveryType, MutableIpDiscoveryPacket};
 use error::{Error, Result};
 use flume::Sender;
@@ -53,14 +53,15 @@ impl Connection {
     }
 
     pub(crate) async fn new_inner(
-        mut info: ConnectionInfo,
+        info: ConnectionInfo,
         interconnect: &Interconnect,
         config: &Config,
         idx: usize,
     ) -> Result<Connection> {
-        let url = generate_url(&mut info.endpoint)?;
+        let url = generate_url(&info.endpoint)?;
 
         let mut client = WsStream::connect(url).await?;
+        let (ws_msg_tx, ws_msg_rx) = flume::unbounded();
 
         let mut hello = None;
         let mut ready = None;
@@ -93,7 +94,11 @@ impl Connection {
                     }
                 },
                 other => {
+                    // Discord hold back per-user connection state until after this handshake.
+                    // There's no guarantee that will remain the case, so buffer it like all
+                    // subsequent steps where we know they *do* send these packets.
                     debug!("Expected ready/hello; got: {:?}", other);
+                    ws_msg_tx.send(WsMessage::Deliver(other))?;
                 },
             }
         }
@@ -103,9 +108,12 @@ impl Connection {
         let ready =
             ready.expect("Ready packet expected in connection initialisation, but not found.");
 
-        if !has_valid_mode(&ready.modes, config.crypto_mode) {
-            return Err(Error::CryptoModeUnavailable);
-        }
+        let chosen_crypto = CryptoMode::negotiate(&ready.modes, Some(config.crypto_mode))?;
+
+        info!(
+            "Crypto scheme negotiation -- wanted {:?}. Chose {:?} from modes {:?}.",
+            config.crypto_mode, chosen_crypto, ready.modes
+        );
 
         let udp = UdpSocket::bind("0.0.0.0:0").await?;
 
@@ -115,7 +123,7 @@ impl Connection {
         } else {
             let socket = Socket::from(udp.into_std()?);
 
-            // Some operating systems does not allow setting the recv buffer to 0.
+            // Some operating systems do not allow setting the recv buffer to 0.
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             socket.set_recv_buffer_size(0)?;
 
@@ -159,30 +167,26 @@ impl Connection {
             let address_str = std::str::from_utf8(&view.get_address_raw()[..nul_byte_index])
                 .map_err(|_| Error::IllegalIp)?;
 
-            let address = IpAddr::from_str(address_str).map_err(|e| {
-                println!("{e:?}");
-                Error::IllegalIp
-            })?;
+            let address = IpAddr::from_str(address_str).map_err(|_| Error::IllegalIp)?;
 
             client
                 .send_json(&GatewayEvent::from(SelectProtocol {
                     protocol: "udp".into(),
                     data: ProtocolData {
                         address,
-                        mode: config.crypto_mode.to_request_str().into(),
+                        mode: chosen_crypto.to_request_str().into(),
                         port: view.get_port(),
                     },
                 }))
                 .await?;
         }
 
-        let cipher = init_cipher(&mut client, config.crypto_mode).await?;
+        let cipher = init_cipher(&mut client, chosen_crypto, &ws_msg_tx).await?;
 
         info!("Connected to: {}", info.endpoint);
 
-        info!("WS heartbeat duration {}ms.", hello.heartbeat_interval,);
+        info!("WS heartbeat duration {}ms.", hello.heartbeat_interval);
 
-        let (ws_msg_tx, ws_msg_rx) = flume::unbounded();
         #[cfg(feature = "receive")]
         let (udp_receiver_msg_tx, udp_receiver_msg_rx) = flume::unbounded();
 
@@ -209,7 +213,7 @@ impl Connection {
             cipher: cipher.clone(),
             #[cfg(not(feature = "receive"))]
             cipher,
-            crypto_state: config.crypto_mode.into(),
+            crypto_state: chosen_crypto.into(),
             #[cfg(feature = "receive")]
             udp_rx: udp_receiver_msg_tx,
             udp_tx,
@@ -244,6 +248,7 @@ impl Connection {
             interconnect.clone(),
             udp_receiver_msg_rx,
             cipher,
+            chosen_crypto,
             config.clone(),
             udp_rx,
             ssrc_tracker,
@@ -267,7 +272,7 @@ impl Connection {
 
     #[instrument(skip(self))]
     pub async fn reconnect_inner(&mut self) -> Result<()> {
-        let url = generate_url(&mut self.info.endpoint)?;
+        let url = generate_url(&self.info.endpoint)?;
 
         // Thread may have died, we want to send to prompt a clean exit
         // (if at all possible) and then proceed as normal.
@@ -303,7 +308,7 @@ impl Connection {
                     }
                 },
                 other => {
-                    debug!("Expected resumed/hello; got: {:?}", other);
+                    self.ws.send(WsMessage::Deliver(other))?;
                 },
             }
         }
@@ -326,18 +331,16 @@ impl Drop for Connection {
     }
 }
 
-fn generate_url(endpoint: &mut String) -> Result<Url> {
-    if endpoint.ends_with(":80") {
-        let len = endpoint.len();
-
-        endpoint.truncate(len - 3);
-    }
-
+fn generate_url(endpoint: &str) -> Result<Url> {
     Url::parse(&format!("wss://{endpoint}/?v={VOICE_GATEWAY_VERSION}")).or(Err(Error::EndpointUrl))
 }
 
 #[inline]
-async fn init_cipher(client: &mut WsStream, mode: CryptoMode) -> Result<Cipher> {
+async fn init_cipher(
+    client: &mut WsStream,
+    mode: CryptoMode,
+    tx: &Sender<WsMessage>,
+) -> Result<Cipher> {
     loop {
         let Some(value) = client.recv_json().await? else {
             continue;
@@ -349,25 +352,15 @@ async fn init_cipher(client: &mut WsStream, mode: CryptoMode) -> Result<Cipher> 
                     return Err(Error::CryptoModeInvalid);
                 }
 
-                return Cipher::new_from_slice(&desc.secret_key)
+                return mode
+                    .cipher_from_key(&desc.secret_key)
                     .map_err(|_| Error::CryptoInvalidLength);
             },
             other => {
-                debug!(
-                    "Expected ready for key; got: op{}/v{:?}",
-                    other.kind() as u8,
-                    other
-                );
+                // Discord can and will send user-specific payload packets during this time
+                // which are needed to map SSRCs to `UserId`s.
+                tx.send(WsMessage::Deliver(other))?;
             },
         }
     }
-}
-
-#[inline]
-fn has_valid_mode<T, It>(modes: It, mode: CryptoMode) -> bool
-where
-    T: for<'a> PartialEq<&'a str>,
-    It: IntoIterator<Item = T>,
-{
-    modes.into_iter().any(|s| s == mode.to_request_str())
 }

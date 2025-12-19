@@ -5,7 +5,7 @@ authors = ["my name <my@email.address>"]
 edition = "2021"
 
 [dependencies]
-dashmap = "5"
+dashmap = "6"
 serenity = { workspace = true }
 songbird = { workspace = true, default-features = true, features = ["receive"] }
 symphonia = { workspace = true }

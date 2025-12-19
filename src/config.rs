@@ -1,14 +1,14 @@
-#[cfg(feature = "receive")]
-use crate::driver::DecodeMode;
+#[cfg(all(feature = "driver", feature = "receive"))]
+use crate::driver::{Channels, DecodeMode, SampleRate};
 #[cfg(feature = "driver")]
 use crate::{
     driver::{
+        get_default_scheduler,
         retry::Retry,
         tasks::disposal::DisposalThread,
         CryptoMode,
         MixMode,
         Scheduler,
-        DEFAULT_SCHEDULER,
     },
     input::codecs::*,
 };
@@ -34,13 +34,13 @@ pub struct Config {
     #[cfg(feature = "driver")]
     /// Selected tagging mode for voice packet encryption.
     ///
-    /// Defaults to [`CryptoMode::Normal`].
+    /// Defaults to [`CryptoMode::Aes256Gcm`].
     ///
     /// Changes to this field will not immediately apply if the
     /// driver is actively connected, but will apply to subsequent
     /// sessions.
     ///
-    /// [`CryptoMode::Normal`]: CryptoMode::Normal
+    /// [`CryptoMode::Aes256Gcm`]: CryptoMode::Aes256Gcm
     pub crypto_mode: CryptoMode,
 
     #[cfg(all(feature = "driver", feature = "receive"))]
@@ -60,6 +60,18 @@ pub struct Config {
     /// [`DecodeMode::Pass`]: DecodeMode::Pass
     /// [User speaking state]: crate::events::CoreEvent::VoiceTick
     pub decode_mode: DecodeMode,
+
+    #[cfg(all(feature = "driver", feature = "receive"))]
+    /// Configures the channel layout for output audio when using [`DecodeMode::Decode`].
+    ///
+    /// Defaults to [`Channels::Stereo`].
+    pub decode_channels: Channels,
+
+    #[cfg(all(feature = "driver", feature = "receive"))]
+    /// Configures the sample rate for output audio when using [`DecodeMode::Decode`].
+    ///
+    /// Defaults to [`SampleRate::Hz48000`].
+    pub decode_sample_rate: SampleRate,
 
     #[cfg(all(feature = "driver", feature = "receive"))]
     /// Configures the amount of time after a user/SSRC is inactive before their decoder state
@@ -169,19 +181,15 @@ pub struct Config {
     /// Registry of the inner codecs supported by the driver, adding audiopus-based
     /// Opus codec support to all of Symphonia's default codecs.
     ///
-    /// Defaults to [`CODEC_REGISTRY`].
-    ///
-    /// [`CODEC_REGISTRY`]: static@CODEC_REGISTRY
+    /// Defaults to [`get_codec_registry`].
     pub codec_registry: &'static CodecRegistry,
 
     #[cfg(feature = "driver")]
     #[derivative(Debug = "ignore")]
     /// Registry of the muxers and container formats supported by the driver.
     ///
-    /// Defaults to [`PROBE`], which includes all of Symphonia's default format handlers
+    /// Defaults to [`get_probe`], which includes all of Symphonia's default format handlers
     /// and DCA format support.
-    ///
-    /// [`PROBE`]: static@PROBE
     pub format_registry: &'static Probe,
 
     #[cfg(feature = "driver")]
@@ -199,7 +207,7 @@ pub struct Config {
     /// The scheduler is responsible for mapping idle and active [`Driver`] instances
     /// to threads.
     ///
-    /// If set to None, then songbird will initialise the [`DEFAULT_SCHEDULER`].
+    /// If set to None, then songbird will use [`get_default_scheduler`].
     ///
     /// [`Driver`]: crate::Driver
     pub scheduler: Option<Scheduler>,
@@ -219,9 +227,13 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             #[cfg(feature = "driver")]
-            crypto_mode: CryptoMode::Normal,
+            crypto_mode: CryptoMode::Aes256Gcm,
             #[cfg(all(feature = "driver", feature = "receive"))]
             decode_mode: DecodeMode::Decrypt,
+            #[cfg(all(feature = "driver", feature = "receive"))]
+            decode_channels: Channels::Stereo,
+            #[cfg(all(feature = "driver", feature = "receive"))]
+            decode_sample_rate: SampleRate::Hz48000,
             #[cfg(all(feature = "driver", feature = "receive"))]
             decode_state_timeout: Duration::from_secs(60),
             #[cfg(all(feature = "driver", feature = "receive"))]
@@ -245,9 +257,9 @@ impl Default for Config {
             #[cfg(feature = "driver")]
             driver_timeout: Some(Duration::from_secs(10)),
             #[cfg(feature = "driver")]
-            codec_registry: &CODEC_REGISTRY,
+            codec_registry: get_codec_registry(),
             #[cfg(feature = "driver")]
-            format_registry: &PROBE,
+            format_registry: get_probe(),
             #[cfg(feature = "driver")]
             disposer: None,
             #[cfg(feature = "driver")]
@@ -276,6 +288,22 @@ impl Config {
     #[must_use]
     pub fn decode_mode(mut self, decode_mode: DecodeMode) -> Self {
         self.decode_mode = decode_mode;
+        self
+    }
+
+    #[cfg(feature = "receive")]
+    /// Sets this `Config`'s channel layout for output audio when using [`DecodeMode::Decode`]
+    #[must_use]
+    pub fn decode_channels(mut self, decode_channels: Channels) -> Self {
+        self.decode_channels = decode_channels;
+        self
+    }
+
+    #[cfg(feature = "receive")]
+    /// Sets this `Config`'s sample rate for output audio when using [`DecodeMode::Decode`]
+    #[must_use]
+    pub fn decode_sample_rate(mut self, decode_sample_rate: SampleRate) -> Self {
+        self.decode_sample_rate = decode_sample_rate;
         self
     }
 
@@ -371,7 +399,7 @@ impl Config {
     pub fn get_scheduler(&self) -> Scheduler {
         self.scheduler
             .as_ref()
-            .unwrap_or(&*DEFAULT_SCHEDULER)
+            .unwrap_or(get_default_scheduler())
             .clone()
     }
 

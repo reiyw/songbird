@@ -219,11 +219,11 @@ impl Call {
     where
         C: Into<ChannelId> + Debug,
     {
-        self._join(channel_id.into()).await
+        self.join_inner(channel_id.into()).await
     }
 
     #[cfg(feature = "driver")]
-    async fn _join(&mut self, channel_id: ChannelId) -> JoinResult<Join> {
+    async fn join_inner(&mut self, channel_id: ChannelId) -> JoinResult<Join> {
         let (tx, rx) = flume::unbounded();
         let (gw_tx, gw_rx) = flume::unbounded();
 
@@ -280,10 +280,10 @@ impl Call {
     where
         C: Into<ChannelId> + Debug,
     {
-        self._join_gateway(channel_id.into()).await
+        self.join_gateway_inner(channel_id.into()).await
     }
 
-    async fn _join_gateway(&mut self, channel_id: ChannelId) -> JoinResult<JoinGateway> {
+    async fn join_gateway_inner(&mut self, channel_id: ChannelId) -> JoinResult<JoinGateway> {
         let (tx, rx) = flume::unbounded();
 
         let do_conn = self
@@ -414,10 +414,10 @@ impl Call {
     where
         C: Into<ChannelId> + Debug,
     {
-        self._update_state(session_id, channel_id.map(Into::into));
+        self.update_state_inner(session_id, channel_id.map(Into::into));
     }
 
-    fn _update_state(&mut self, session_id: String, channel_id: Option<ChannelId>) {
+    fn update_state_inner(&mut self, session_id: String, channel_id: Option<ChannelId>) {
         if let Some(channel_id) = channel_id {
             let try_conn = if let Some((ref mut progress, _)) = self.connection.as_mut() {
                 progress.apply_state_update(session_id, channel_id)

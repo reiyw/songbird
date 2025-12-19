@@ -327,6 +327,7 @@ impl Live {
             return;
         }
 
+        #[allow(clippy::used_underscore_items)]
         self._march_deadline();
     }
 

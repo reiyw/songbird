@@ -1,7 +1,7 @@
 use super::message::*;
 use crate::ws::Error as WsError;
+use aes_gcm::Error as CryptoError;
 use audiopus::Error as OpusError;
-use crypto_secretbox::aead::Error as CryptoError;
 use flume::SendError;
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
 
@@ -20,7 +20,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     Crypto(CryptoError),
-    #[cfg(feature = "receive")]
+    #[cfg(any(feature = "receive", test))]
     /// Received an illegal voice packet on the voice UDP socket.
     IllegalVoicePacket,
     InterconnectFailure(Recipient),

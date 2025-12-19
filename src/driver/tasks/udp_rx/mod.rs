@@ -5,14 +5,14 @@ mod ssrc_state;
 use self::{decode_sizes::*, playout_buffer::*, ssrc_state::*};
 
 use super::message::*;
+use crate::driver::CryptoMode;
 use crate::{
     constants::*,
-    driver::CryptoMode,
+    driver::crypto::Cipher,
     events::{context_data::VoiceTick, internal_data::*, CoreContext},
     Config,
 };
 use bytes::BytesMut;
-use crypto_secretbox::XSalsa20Poly1305 as Cipher;
 use discortp::{
     demux::{self, DemuxedMut},
     rtp::RtpPacket,
@@ -33,6 +33,7 @@ type RtpSsrc = u32;
 
 struct UdpRx {
     cipher: Cipher,
+    crypto_mode: CryptoMode,
     decoder_map: HashMap<RtpSsrc, SsrcState>,
     config: Config,
     rx: Receiver<UdpRxMessage>,
@@ -65,7 +66,13 @@ impl UdpRx {
                             *interconnect = i;
                         },
                         Ok(UdpRxMessage::SetConfig(c)) => {
+                            let old_coder = (self.config.decode_channels, self.config.decode_sample_rate);
+                            let new_coder = (c.decode_channels, c.decode_sample_rate);
                             self.config = c;
+
+                            if old_coder != new_coder {
+                                self.decoder_map.values_mut().for_each(|v| v.reconfigure_decoder(&self.config));
+                            }
                         },
                         Err(flume::RecvError::Disconnected) => break,
                     }
@@ -143,7 +150,7 @@ impl UdpRx {
         // For simplicity, if the event task fails then we nominate the mixing thread
         // to rebuild their context etc. (hence, the `let _ =` statements.), as it will
         // try to make contact every 20ms.
-        let crypto_mode = self.config.crypto_mode;
+        let crypto_mode = self.crypto_mode;
 
         match demux::demux_mut(packet.as_mut()) {
             DemuxedMut::Rtp(mut rtp) => {
@@ -153,11 +160,12 @@ impl UdpRx {
                 }
 
                 let packet_data = if self.config.decode_mode.should_decrypt() {
-                    let out = crypto_mode
-                        .decrypt_in_place(&mut rtp, &self.cipher)
+                    let out = self
+                        .cipher
+                        .decrypt_rtp_in_place(&mut rtp)
                         .map(|(s, t)| (s, t, true));
 
-                    if let Err(e) = out {
+                    if let Err(ref e) = out {
                         warn!("RTP decryption failed: {:?}", e);
                     }
 
@@ -169,7 +177,7 @@ impl UdpRx {
                 let rtp = rtp.to_immutable();
                 let (rtp_body_start, rtp_body_tail, decrypted) = packet_data.unwrap_or_else(|| {
                     (
-                        CryptoMode::payload_prefix_len(),
+                        crypto_mode.payload_prefix_len(),
                         crypto_mode.payload_suffix_len(),
                         false,
                     )
@@ -178,7 +186,7 @@ impl UdpRx {
                 let entry = self
                     .decoder_map
                     .entry(rtp.get_ssrc())
-                    .or_insert_with(|| SsrcState::new(&rtp, &self.config));
+                    .or_insert_with(|| SsrcState::new(&rtp, crypto_mode, &self.config));
 
                 // Only do this on RTP, rather than RTCP -- this pins decoder state liveness
                 // to *speech* rather than just presence.
@@ -201,9 +209,9 @@ impl UdpRx {
             },
             DemuxedMut::Rtcp(mut rtcp) => {
                 let packet_data = if self.config.decode_mode.should_decrypt() {
-                    let out = crypto_mode.decrypt_in_place(&mut rtcp, &self.cipher);
+                    let out = self.cipher.decrypt_rtcp_in_place(&mut rtcp);
 
-                    if let Err(e) = out {
+                    if let Err(ref e) = out {
                         warn!("RTCP decryption failed: {:?}", e);
                     }
 
@@ -214,7 +222,7 @@ impl UdpRx {
 
                 let (start, tail) = packet_data.unwrap_or_else(|| {
                     (
-                        CryptoMode::payload_prefix_len(),
+                        crypto_mode.payload_prefix_len(),
                         crypto_mode.payload_suffix_len(),
                     )
                 });
@@ -242,6 +250,7 @@ pub(crate) async fn runner(
     mut interconnect: Interconnect,
     rx: Receiver<UdpRxMessage>,
     cipher: Cipher,
+    crypto_mode: CryptoMode,
     config: Config,
     udp_socket: UdpSocket,
     ssrc_signalling: Arc<SsrcTracker>,
@@ -250,6 +259,7 @@ pub(crate) async fn runner(
 
     let mut state = UdpRx {
         cipher,
+        crypto_mode,
         decoder_map: HashMap::new(),
         config,
         rx,

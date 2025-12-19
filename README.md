@@ -13,7 +13,6 @@ The library offers:
  a `ConnectionInfo` using any other gateway, or language for your bot, then you
  can run the songbird voice driver.
  * Voice receive and RT(C)P packet handling via the `"receive"` feature.
- * SIMD-accelerated JSON decoding via the `"simd-json"` feature.
  * And, by default, a fully featured voice system featuring events, queues,
  seeking on compatible streams, shared multithreaded audio stream caches,
  and direct Opus data passthrough from DCA files.
@@ -31,13 +30,13 @@ project you will need to depend on Symphonia as well.
 ```toml
 # Including songbird alone gives you support for Opus via the DCA file format.
 [dependencies.songbird]
-version = "0.4"
+version = "0.5"
 features = ["builtin-queue"]
 
 # To get additional codecs, you *must* add Symphonia yourself.
 # This includes the default formats (MKV/WebM, Ogg, Wave) and codecs (FLAC, PCM, Vorbis)...
 [dependencies.symphonia]
-version = "0.5.2"
+version = "0.5"
 features = ["aac", "mp3", "isomp4", "alac"] # ...as well as any extras you need!
 ```
 

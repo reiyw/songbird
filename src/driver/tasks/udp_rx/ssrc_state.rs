@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
-    constants::*,
     driver::{
         tasks::error::{Error, Result},
+        Channels,
         DecodeMode,
     },
     events::context_data::{RtpData, VoiceData},
@@ -11,7 +11,6 @@ use audiopus::{
     coder::Decoder as OpusDecoder,
     error::{Error as OpusError, ErrorCode},
     packet::Packet as OpusPacket,
-    Channels,
 };
 use discortp::{rtp::RtpExtensionPacket, Packet, PacketSize};
 use tracing::{error, warn};
@@ -19,24 +18,40 @@ use tracing::{error, warn};
 #[derive(Debug)]
 pub struct SsrcState {
     playout_buffer: PlayoutBuffer,
+    crypto_mode: CryptoMode,
     decoder: OpusDecoder,
     decode_size: PacketDecodeSize,
     pub(crate) prune_time: Instant,
     pub(crate) disconnected: bool,
+    channels: Channels,
 }
 
 impl SsrcState {
-    pub fn new(pkt: &RtpPacket<'_>, config: &Config) -> Self {
+    pub fn new(pkt: &RtpPacket<'_>, crypto_mode: CryptoMode, config: &Config) -> Self {
         let playout_capacity = config.playout_buffer_length.get() + config.playout_spike_length;
 
         Self {
             playout_buffer: PlayoutBuffer::new(playout_capacity, pkt.get_sequence().0),
-            decoder: OpusDecoder::new(SAMPLE_RATE, Channels::Stereo)
-                .expect("Failed to create new Opus decoder for source."),
+            crypto_mode,
+            decoder: OpusDecoder::new(
+                config.decode_sample_rate.into(),
+                config.decode_channels.into(),
+            )
+            .expect("Failed to create new Opus decoder for source."),
             decode_size: PacketDecodeSize::TwentyMillis,
             prune_time: Instant::now() + config.decode_state_timeout,
             disconnected: false,
+            channels: config.decode_channels,
         }
+    }
+
+    pub fn reconfigure_decoder(&mut self, config: &Config) {
+        self.decoder = OpusDecoder::new(
+            config.decode_sample_rate.into(),
+            config.decode_channels.into(),
+        )
+        .expect("Failed to create new Opus decoder for source.");
+        self.channels = config.decode_channels;
     }
 
     pub fn store_packet(&mut self, packet: StoredPacket, config: &Config) {
@@ -53,7 +68,7 @@ impl SsrcState {
         // Acquire a packet from the playout buffer:
         // Update nexts, lasts...
         // different cases: null packet who we want to decode as a miss, and packet who we must ignore temporarily.
-        let m_pkt = self.playout_buffer.fetch_packet();
+        let m_pkt = self.playout_buffer.fetch_packet(config);
         let pkt = match m_pkt {
             PacketLookup::Packet(StoredPacket { packet, decrypted }) => Some((packet, decrypted)),
             PacketLookup::MissedPacket => None,
@@ -72,8 +87,8 @@ impl SsrcState {
             let extensions = rtp.get_extension() != 0;
 
             let payload = rtp.payload();
-            let payload_offset = CryptoMode::payload_prefix_len();
-            let payload_end_pad = payload.len() - config.crypto_mode.payload_suffix_len();
+            let payload_offset = self.crypto_mode.payload_prefix_len();
+            let payload_end_pad = payload.len() - self.crypto_mode.payload_suffix_len();
 
             // We still need to compute missed packets here in case of long loss chains or similar.
             // This occurs due to the fallback in 'store_packet' (i.e., empty buffer and massive seq difference).
@@ -158,7 +173,7 @@ impl SsrcState {
                     Ok(audio_len) => {
                         // Decoding to stereo: audio_len refers to sample count irrespective of channel count.
                         // => multiply by number of channels.
-                        out.truncate(2 * audio_len);
+                        out.truncate(self.channels.channels() * audio_len);
 
                         break;
                     },
