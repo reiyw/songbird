@@ -24,10 +24,7 @@ use crate::{
     Config,
 };
 use audiopus::{
-    coder::Encoder as OpusEncoder,
-    softclip::SoftClip,
-    Application as CodingMode,
-    Bitrate,
+    coder::Encoder as OpusEncoder, softclip::SoftClip, Application as CodingMode, Bitrate,
 };
 use discortp::{
     discord::MutableKeepalivePacket,
@@ -40,7 +37,7 @@ use rubato::{FftFixedOut, Resampler};
 use std::{
     io::Write,
     result::Result as StdResult,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
 };
 use symphonia_core::{
@@ -503,10 +500,12 @@ impl Mixer {
     #[inline]
     pub(crate) fn test_signal_empty_tick(&self) {
         match &self.config.override_connection {
-            Some(OutputMode::Raw(tx)) =>
-                drop(tx.send(crate::driver::test_config::TickMessage::NoEl)),
-            Some(OutputMode::Rtp(tx)) =>
-                drop(tx.send(crate::driver::test_config::TickMessage::NoEl)),
+            Some(OutputMode::Raw(tx)) => {
+                drop(tx.send(crate::driver::test_config::TickMessage::NoEl))
+            },
+            Some(OutputMode::Rtp(tx)) => {
+                drop(tx.send(crate::driver::test_config::TickMessage::NoEl))
+            },
             None => {},
         }
     }
@@ -644,19 +643,33 @@ impl Mixer {
         let payload = rtp.payload_mut();
         let crypto_mode = conn.crypto_state.kind();
         let first_payload_byte = crypto_mode.payload_prefix_len();
+        let total_payload_space = payload.len() - crypto_mode.payload_suffix_len();
 
         // If passthrough, Opus payload in place already.
         // Else encode into buffer with space for AEAD encryption headers.
-        let payload_len = match mix_len {
+        let mut payload_len = match mix_len {
             MixType::Passthrough(opus_len) => opus_len,
-            MixType::MixedPcm(_samples) => {
-                let total_payload_space = payload.len() - crypto_mode.payload_suffix_len();
-                self.encoder.encode_float(
-                    &send_buffer[..self.config.mix_mode.sample_count_in_frame()],
-                    &mut payload[first_payload_byte..total_payload_space],
-                )?
-            },
+            MixType::MixedPcm(_samples) => self.encoder.encode_float(
+                &send_buffer[..self.config.mix_mode.sample_count_in_frame()],
+                &mut payload[first_payload_byte..total_payload_space],
+            )?,
         };
+
+        if conn.dave_protocol_version.load(Ordering::Relaxed) != 0 {
+            if let Some(ref mut dave_session) = *conn.dave_session.blocking_write() {
+                if dave_session.is_ready() {
+                    let encrypted = dave_session
+                        .encrypt_opus(
+                            &payload[first_payload_byte..first_payload_byte + payload_len],
+                        )?
+                        .into_owned();
+                    payload_len = encrypted.len();
+
+                    payload[first_payload_byte..first_payload_byte + payload_len]
+                        .copy_from_slice(&encrypted);
+                }
+            }
+        }
 
         let final_payload_size = conn
             .crypto_state
@@ -854,8 +867,9 @@ impl Mixer {
             // to recreate? Probably not doable in the general case.
             match status {
                 MixStatus::Live => track.step_frame(),
-                MixStatus::Errored(e) =>
-                    track.playing = PlayMode::Errored(PlayError::Decode(e.into())),
+                MixStatus::Errored(e) => {
+                    track.playing = PlayMode::Errored(PlayError::Decode(e.into()))
+                },
                 MixStatus::Ended if track.do_loop() => {
                     drop(self.track_handles[i].seek(Duration::default()));
                     if !self.prevent_events {
