@@ -195,10 +195,8 @@ impl FormatReader for DcaReader {
     fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> SymphResult<SeekedTo> {
         let can_backseek = self.source.is_seekable();
 
-        let track = if self.track.is_none() {
+        let Some(track) = &self.track else {
             return symph_err::seek_error(SeekErrorKind::Unseekable);
-        } else {
-            self.track.as_ref().unwrap()
         };
 
         let rate = track.codec_params.sample_rate;
@@ -253,11 +251,7 @@ impl FormatReader for DcaReader {
         // DCA tracks can hold only one track by design.
         // Of course, a zero-length file is technically allowed,
         // in which case no track.
-        if let Some(track) = self.track.as_ref() {
-            std::slice::from_ref(track)
-        } else {
-            &[]
-        }
+        self.track.as_slice()
     }
 
     fn default_track(&self) -> Option<&Track> {
@@ -285,11 +279,13 @@ impl FormatReader for DcaReader {
 
         let buf = self.source.read_boxed_slice_exact(p_len as usize)?;
 
-        let checked_buf = buf[..].try_into().or_else(|_| {
-            symph_err::decode_error("Packet was not a valid Opus Packet: too large for audiopus.")
-        })?;
+        if buf.is_empty() || buf.len() > i32::MAX as usize {
+            return symph_err::decode_error(
+                "Packet was not a valid Opus packet: too large for opus2.",
+            );
+        }
 
-        let sample_ct = audiopus::packet::nb_samples(checked_buf, SAMPLE_RATE).or_else(|_| {
+        let sample_ct = opus2::packet::get_nb_samples(&buf, SAMPLE_RATE).or_else(|_| {
             symph_err::decode_error(
                 "Packet was not a valid Opus packet: couldn't read sample count.",
             )

@@ -5,7 +5,7 @@ mod ssrc_state;
 use self::{decode_sizes::*, playout_buffer::*, ssrc_state::*};
 
 use super::message::*;
-use crate::driver::CryptoMode;
+use crate::driver::{CryptoMode, DecodeMode};
 use crate::{
     constants::*,
     driver::crypto::Cipher,
@@ -16,17 +16,20 @@ use bytes::BytesMut;
 use discortp::{
     demux::{self, DemuxedMut},
     rtp::RtpPacket,
-    MutablePacket,
 };
+use discortp::{MutablePacket, Packet};
 use flume::Receiver;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{
+    atomic::{AtomicU16, Ordering},
+    RwLock,
+};
 use std::{
     collections::{HashMap, HashSet},
     num::Wrapping,
     sync::Arc,
     time::Duration,
 };
-use tokio::{net::UdpSocket, select, sync::RwLock, time::Instant};
+use tokio::{net::UdpSocket, select, time::Instant};
 use tracing::{error, instrument, trace, warn};
 
 type RtpSequence = Wrapping<u16>;
@@ -69,13 +72,12 @@ impl UdpRx {
                         Ok(UdpRxMessage::ReplaceInterconnect(i)) => {
                             *interconnect = i;
                         },
-                        Ok(UdpRxMessage::SetConfig(c)) => {
-                            let old_coder = (self.config.decode_channels, self.config.decode_sample_rate);
-                            let new_coder = (c.decode_channels, c.decode_sample_rate);
-                            self.config = c;
-
-                            if old_coder != new_coder {
-                                self.decoder_map.values_mut().for_each(|v| v.reconfigure_decoder(&self.config));
+                        Ok(UdpRxMessage::SetConfig(new_config)) => {
+                            if let DecodeMode::Decode(old_config) = &mut self.config.decode_mode {
+                                if *old_config != new_config {
+                                    *old_config = new_config;
+                                    self.decoder_map.values_mut().for_each(|v| v.reconfigure_decoder(new_config));
+                                }
                             }
                         },
                         Err(flume::RecvError::Disconnected) => break,
@@ -165,11 +167,18 @@ impl UdpRx {
                     return;
                 }
 
-                let packet_data = if self.config.decode_mode.should_decrypt() {
-                    let out = self
-                        .cipher
-                        .decrypt_rtp_in_place(&mut rtp)
-                        .map(|(s, t)| (s, t, true));
+                let mut packet_data = if self.config.decode_mode.should_decrypt() {
+                    let out = self.cipher.decrypt_rtp_in_place(&mut rtp).map(|(s, t)| {
+                        if rtp.get_padding() != 0 {
+                            let payload = rtp.payload();
+                            let payload_length = payload.len();
+                            let padding_count = payload[payload_length - t - 1] as usize;
+
+                            (s, t + padding_count, true)
+                        } else {
+                            (s, t, true)
+                        }
+                    });
 
                     if let Err(ref e) = out {
                         warn!("RTP decryption failed: {:?}", e);
@@ -180,60 +189,63 @@ impl UdpRx {
                     None
                 };
 
-                // If transport encryption was decrypted, DAVE is used
-                // and we know who this voice packet came from
                 if let Some((rtp_body_start, rtp_body_tail, decrypted)) = packet_data {
-                    if decrypted && self.dave_protocol_version.load(Ordering::Relaxed) != 0 {
-                        if let Some(ref mut dave_session) = *self.dave_session.write().await {
-                            if dave_session.is_ready() {
-                                if let Some(user_id) =
-                                    self.ssrc_signalling.ssrc_user_map.get(&rtp.get_ssrc())
-                                {
-                                    let payload = rtp.payload_mut();
-                                    let payload_length = payload.len();
-                                    let mut body = &mut payload
-                                        [rtp_body_start..payload_length - rtp_body_tail];
+                    let ssrc = rtp.get_ssrc();
+                    let payload = rtp.payload_mut();
+                    let payload_length = payload.len();
+                    let body = &mut payload[rtp_body_start..payload_length - rtp_body_tail];
+                    let body_length = body.len();
 
-                                    // HACK: Discord sometimes include PKCS7 padding in the payload
-                                    // for no inexplicable reason. This doesn't consistently happen.
-                                    if !body.ends_with(b"\xfa\xfa") {
-                                        if let Some(padding_byte) = body.last().copied() {
-                                            let padding_byte = padding_byte as usize;
-                                            let body_length = body.len();
+                    // If the packet is transport-decrypted, DAVE is enabled, and the packet
+                    // looks encrypted: https://daveprotocol.com/#protocol-frame-check
+                    // The packet must be at least 11 bytes consisting of:
+                    // - 8 byte truncated AES128-GCM authentication tag
+                    // - 1 byte protocol supplemental data size
+                    // - 2 byte magic marker
+                    if decrypted
+                        && self.dave_protocol_version.load(Ordering::Relaxed) != 0
+                        && body_length >= 11
+                        && body[body_length - DAVE_MAGIC_MARKER.len()..body_length]
+                            == DAVE_MAGIC_MARKER
+                    {
+                        // Silently drop encrypted packets if it's not possible to decrypt them for
+                        // one reason or another; otherwise there'd be error logs for trying to decode
+                        // Opus
+                        let Some(user_id) = self.ssrc_signalling.ssrc_user_map.get(&ssrc) else {
+                            return;
+                        };
+                        let Some(ref mut dave_session) = *self.dave_session.write().unwrap() else {
+                            return;
+                        };
 
-                                            if padding_byte < body_length
-                                                && body[..body_length - padding_byte]
-                                                    .ends_with(b"\xfa\xfa")
-                                                && body[body_length - padding_byte..]
-                                                    .iter()
-                                                    .all(|b| (*b as usize) == padding_byte)
-                                            {
-                                                body = &mut body[..body_length - padding_byte];
-                                            }
-                                        }
-                                    }
+                        if !dave_session.is_ready() {
+                            return;
+                        }
 
-                                    let result = dave_session.decrypt(
-                                        user_id.0,
-                                        davey::MediaType::AUDIO,
-                                        body,
-                                    );
+                        let result = dave_session.decrypt(user_id.0, davey::MediaType::AUDIO, body);
 
-                                    match result {
-                                        Ok(decrypted_payload) => {
-                                            body[..decrypted_payload.len()]
-                                                .copy_from_slice(&decrypted_payload);
-                                        },
-                                        Err(e) if body.ends_with(b"\xfa\xfa") => {
-                                            warn!(error = ?e, "DAVE decryption failed");
-                                        },
-                                        _ => {
-                                            // Let packets that failed to decrypt but does not look like
-                                            // a DAVE frame to pass through normally.
-                                        },
-                                    }
-                                }
-                            }
+                        match result {
+                            Ok(decrypted_body) => {
+                                packet_data = Some((
+                                    rtp_body_start,
+                                    rtp_body_tail + (body.len() - decrypted_body.len()),
+                                    decrypted,
+                                ));
+                                body[..decrypted_body.len()].copy_from_slice(&decrypted_body);
+                            },
+                            Err(davey::errors::DecryptError::NoDecryptorForUser)
+                            | Err(davey::errors::DecryptError::DecryptionFailed(
+                                davey::errors::DecryptorDecryptError::NoValidCryptorFound {
+                                    ..
+                                },
+                            )) => {
+                                // Silently drop encrypted packets for users whose ratchets are not configured yet.
+                                return;
+                            },
+                            Err(e) => {
+                                error!(error = ?e, "DAVE decryption failed");
+                                return;
+                            },
                         }
                     }
                 }
@@ -254,7 +266,7 @@ impl UdpRx {
 
                 // Only do this on RTP, rather than RTCP -- this pins decoder state liveness
                 // to *speech* rather than just presence.
-                entry.refresh_timer(self.config.decode_state_timeout);
+                entry.refresh_timer(self.config.decode_state_timeout.into());
 
                 let store_pkt = StoredPacket {
                     packet: packet.freeze(),

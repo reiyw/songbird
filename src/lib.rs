@@ -2,7 +2,7 @@
     html_logo_url = "https://raw.githubusercontent.com/serenity-rs/songbird/current/songbird.png",
     html_favicon_url = "https://raw.githubusercontent.com/serenity-rs/songbird/current/songbird-ico.png"
 )]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 //! ![project logo][logo]
@@ -29,7 +29,7 @@
 //!
 //! ## Codec support
 //! Songbird supports all [codecs and formats provided by Symphonia] (pure-Rust), with Opus support
-//! provided by [audiopus] (an FFI wrapper for libopus).
+//! provided by [opus2] (an FFI wrapper for libopus).
 //!
 //! **By default, *Songbird will not request any codecs from Symphonia*.** To change this, in your own
 //! project you will need to depend on Symphonia as well.
@@ -59,7 +59,7 @@
 //! [`ConnectionInfo`]: struct@ConnectionInfo
 //! [lavalink]: https://github.com/freyacodes/Lavalink
 //! [codecs and formats provided by Symphonia]: https://github.com/pdeljanov/Symphonia#formats-demuxers
-//! [audiopus]: https://github.com/lakelezz/audiopus
+//! [opus2]: https://github.com/cijiugechu/opus2
 
 #![warn(clippy::pedantic, rust_2018_idioms)]
 #![allow(
@@ -77,9 +77,6 @@
     clippy::missing_panics_doc,
     clippy::doc_link_with_quotes,
     clippy::doc_markdown,
-    // Allowed as they cannot be fixed without breaking
-    clippy::result_large_err,
-    clippy::large_enum_variant,
 )]
 
 mod config;
@@ -89,6 +86,7 @@ pub mod driver;
 pub mod error;
 #[cfg(feature = "driver")]
 pub mod events;
+mod float_duration;
 #[cfg(feature = "gateway")]
 mod handler;
 pub mod id;
@@ -130,4 +128,5 @@ pub use crate::{handler::*, manager::*};
 pub use crate::serenity::*;
 
 pub use config::Config;
+pub use float_duration::FloatDuration;
 pub use info::ConnectionInfo;

@@ -10,14 +10,14 @@ license = "ISC"
 name = "songbird"
 readme = "README.md"
 repository = "https://github.com/serenity-rs/songbird.git"
-rust-version = "1.74.1"
-version = "0.5.0"
+rust-version = "1.83.0"
+version = "0.6.1"
 
 [dependencies]
 aead = { optional = true, version = "0.5.2" }
 aes-gcm = { optional = true, version = "0.10.3" }
 async-trait = { optional = true, version = "0.1" }
-audiopus = { optional = true, version = "0.3.0-rc.0" }
+opus2 = { optional = true, version = "0.4.0" }
 byteorder = { optional = true, version = "1" }
 bytes = { optional = true, version = "1" }
 chacha20poly1305 = { optional = true, version = "0.10.1" }
@@ -50,7 +50,7 @@ serenity = { default-features = false, optional = true, version = "0.12.0", feat
     "voice",
     "gateway",
 ] }
-serenity-voice-model = { optional = true, git = "https://github.com/serenity-rs/voice-model.git", branch = "next" }
+serenity-voice-model = { optional = true, version = "0.3" }
 socket2 = { optional = true, version = "0.5" }
 streamcatcher = { optional = true, version = "1" }
 stream_lib = { default-features = false, optional = true, version = "0.5.2" }
@@ -67,11 +67,13 @@ tokio-websockets = { optional = true, version = "0.11", features = [
 tokio-util = { features = ["io"], optional = true, version = "0.7" }
 tracing = { version = "0.1", features = ["log"] }
 tracing-futures = "0.2"
-twilight-gateway = { default-features = false, optional = true, version = "0.16.0" }
-twilight-model = { default-features = false, optional = true, version = "0.16.0" }
+twilight-gateway = { default-features = false, optional = true, version = ">= 0.16.0, <= 0.17" }
+twilight-model = { default-features = false, optional = true, version = ">= 0.16.0, <= 0.17" }
 typenum = { optional = true, version = "1.17.0" }
 url = { optional = true, version = "2" }
 uuid = { features = ["v4"], optional = true, version = "1" }
+nonmax = "0.5.5"
+enum-map = "2.7.3"
 
 [dev-dependencies]
 byteorder = "1"
@@ -96,7 +98,7 @@ driver = [
     "dep:aead",
     "dep:aes-gcm",
     "dep:async-trait",
-    "dep:audiopus",
+    "dep:opus2",
     "dep:byteorder",
     "dep:bytes",
     "dep:chacha20poly1305",

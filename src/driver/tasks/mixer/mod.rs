@@ -23,15 +23,13 @@ use crate::{
     tracks::{Action, LoopState, PlayError, PlayMode, TrackCommand, TrackHandle, TrackState, View},
     Config,
 };
-use audiopus::{
-    coder::Encoder as OpusEncoder, softclip::SoftClip, Application as CodingMode, Bitrate,
-};
 use discortp::{
     discord::MutableKeepalivePacket,
     rtp::{MutableRtpPacket, RtpPacket},
     MutablePacket,
 };
 use flume::{Receiver, SendError, Sender, TryRecvError};
+use opus2::{Application as CodingMode, Bitrate, Encoder as OpusEncoder, SoftClip};
 use rand::random;
 use rubato::{FftFixedOut, Resampler};
 use std::{
@@ -112,8 +110,8 @@ impl Mixer {
 
         let keepalive_packet = [0u8; MutableKeepalivePacket::minimum_packet_size()];
 
-        let tracks = Vec::with_capacity(1.max(config.preallocated_tracks));
-        let track_handles = Vec::with_capacity(1.max(config.preallocated_tracks));
+        let tracks = Vec::with_capacity(usize::from(1.max(config.preallocated_tracks)));
+        let track_handles = Vec::with_capacity(usize::from(1.max(config.preallocated_tracks)));
 
         let thread_pool = BlockyTaskPool::new(async_handle);
 
@@ -225,7 +223,7 @@ impl Mixer {
         let mut should_exit = false;
 
         let error = match msg {
-            MixerMessage::AddTrack(t) => self.add_track(t),
+            MixerMessage::AddTrack(t) => self.add_track(*t),
             MixerMessage::SetTrack(t) => {
                 self.tracks.clear();
                 self.track_handles.clear();
@@ -235,7 +233,7 @@ impl Mixer {
                 if let Some(t) = t {
                     // Do this unconditionally: this affects local state infallibly,
                     // with the event installation being the remote part.
-                    if let Err(e) = self.add_track(t) {
+                    if let Err(e) = self.add_track(*t) {
                         out = Err(e);
                     }
                 }
@@ -319,17 +317,18 @@ impl Mixer {
                     new_config,
                 );
 
-                if self.tracks.capacity() < self.config.preallocated_tracks {
-                    self.tracks
-                        .reserve(self.config.preallocated_tracks - self.tracks.len());
+                let preallocated_tracks = usize::from(self.config.preallocated_tracks);
+                if self.tracks.capacity() < preallocated_tracks {
+                    self.tracks.reserve(preallocated_tracks - self.tracks.len());
                 }
 
                 #[cfg(feature = "receive")]
                 if let Some(conn) = &self.conn_active {
-                    conn_failure |= conn
-                        .udp_rx
-                        .send(UdpRxMessage::SetConfig(new_config))
-                        .is_err();
+                    if let crate::driver::DecodeMode::Decode(decode_config) = new_config.decode_mode
+                    {
+                        let msg = UdpRxMessage::SetConfig(decode_config);
+                        conn_failure |= conn.udp_rx.send(msg).is_err();
+                    }
                 }
 
                 Ok(())
@@ -500,12 +499,10 @@ impl Mixer {
     #[inline]
     pub(crate) fn test_signal_empty_tick(&self) {
         match &self.config.override_connection {
-            Some(OutputMode::Raw(tx)) => {
-                drop(tx.send(crate::driver::test_config::TickMessage::NoEl))
-            },
-            Some(OutputMode::Rtp(tx)) => {
-                drop(tx.send(crate::driver::test_config::TickMessage::NoEl))
-            },
+            Some(OutputMode::Raw(tx)) =>
+                drop(tx.send(crate::driver::test_config::TickMessage::NoEl)),
+            Some(OutputMode::Rtp(tx)) =>
+                drop(tx.send(crate::driver::test_config::TickMessage::NoEl)),
             None => {},
         }
     }
@@ -656,7 +653,7 @@ impl Mixer {
         };
 
         if conn.dave_protocol_version.load(Ordering::Relaxed) != 0 {
-            if let Some(ref mut dave_session) = *conn.dave_session.blocking_write() {
+            if let Some(ref mut dave_session) = *conn.dave_session.write().unwrap() {
                 if dave_session.is_ready() {
                     let encrypted = dave_session
                         .encrypt_opus(
@@ -867,9 +864,8 @@ impl Mixer {
             // to recreate? Probably not doable in the general case.
             match status {
                 MixStatus::Live => track.step_frame(),
-                MixStatus::Errored(e) => {
-                    track.playing = PlayMode::Errored(PlayError::Decode(e.into()))
-                },
+                MixStatus::Errored(e) =>
+                    track.playing = PlayMode::Errored(PlayError::Decode(e.into())),
                 MixStatus::Ended if track.do_loop() => {
                     drop(self.track_handles[i].seek(Duration::default()));
                     if !self.prevent_events {

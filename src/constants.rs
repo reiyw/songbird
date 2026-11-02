@@ -1,9 +1,9 @@
 //! Constants affecting driver function and API handling.
 
 #[cfg(feature = "driver")]
-use audiopus::{Bitrate, SampleRate};
-#[cfg(feature = "driver")]
 use discortp::rtp::RtpType;
+#[cfg(feature = "driver")]
+use opus2::Bitrate;
 use std::time::Duration;
 
 #[cfg(feature = "driver")]
@@ -12,7 +12,7 @@ pub const VOICE_GATEWAY_VERSION: u8 = crate::model::constants::GATEWAY_VERSION;
 
 #[cfg(feature = "driver")]
 /// Sample rate of audio to be sent to Discord.
-pub const SAMPLE_RATE: SampleRate = SampleRate::Hz48000;
+pub const SAMPLE_RATE: u32 = 48000;
 
 /// Sample rate of audio to be sent to Discord.
 pub const SAMPLE_RATE_RAW: usize = 48_000;
@@ -25,7 +25,7 @@ pub const TIMESTEP_LENGTH: Duration = Duration::from_millis(1000 / AUDIO_FRAME_R
 
 #[cfg(feature = "driver")]
 /// Default bitrate for audio.
-pub const DEFAULT_BITRATE: Bitrate = Bitrate::BitsPerSecond(128_000);
+pub const DEFAULT_BITRATE: Bitrate = Bitrate::Bits(128_000);
 
 /// Number of output samples at 48kHZ to produced when resampling subframes.
 pub(crate) const RESAMPLE_OUTPUT_FRAME_SIZE: usize = MONO_FRAME_SIZE / 2;
@@ -79,6 +79,11 @@ pub const RTP_VERSION: u8 = 2;
 #[cfg(feature = "driver")]
 /// Profile type used by Discord's Opus audio traffic.
 pub const RTP_PROFILE_TYPE: RtpType = RtpType::Dynamic(120);
+
+#[cfg(feature = "receive")]
+/// The magic marker appended to the end of DAVE encrypted payloads, used to determine
+/// whether the voice packet is encrypted.
+pub const DAVE_MAGIC_MARKER: [u8; 2] = [0xfa, 0xfa];
 
 #[cfg(test)]
 #[allow(clippy::doc_markdown, missing_docs)]

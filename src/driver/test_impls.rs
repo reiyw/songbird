@@ -20,9 +20,9 @@ use std::{
     io::Cursor,
     net::UdpSocket,
     num::NonZeroU16,
-    sync::{atomic::AtomicU16, Arc},
+    sync::{atomic::AtomicU16, Arc, RwLock},
 };
-use tokio::{runtime::Handle, sync::RwLock};
+use tokio::runtime::Handle;
 
 // create a dummied task + interconnect.
 // measure perf at varying numbers of sources (binary 1--64) without passthrough support.
@@ -177,7 +177,7 @@ impl Mixer {
         let input: Input = RawAdapter::new(Cursor::new(floats), 48_000, 2).into();
 
         let mut src = handle.block_on(async move {
-            Compressed::new(input, Bitrate::BitsPerSecond(128_000))
+            Compressed::new(input, Bitrate::Bits(128_000))
                 .await
                 .expect("These parameters are well-defined.")
         });

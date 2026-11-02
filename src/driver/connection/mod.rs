@@ -8,13 +8,15 @@ use super::{
         message::*,
         ws::{self as ws_task, AuxNetwork},
     },
-    Config, CryptoMode,
+    Config,
+    CryptoMode,
 };
 use crate::{
     constants::*,
     model::{
         payload::{Identify, Resume, SelectProtocol},
-        Event as GatewayEvent, ProtocolData,
+        Event as GatewayEvent,
+        ProtocolData,
     },
     ws::WsStream,
     ConnectionInfo,
@@ -24,9 +26,9 @@ use error::{Error, Result};
 use flume::Sender;
 use serenity_voice_model::payload::DaveMlsKeyPackage;
 use socket2::Socket;
-use std::sync::{atomic::AtomicU16, Arc};
+use std::sync::{atomic::AtomicU16, Arc, RwLock};
 use std::{net::IpAddr, num::NonZeroU16, str::FromStr};
-use tokio::{net::UdpSocket, spawn, sync::RwLock, time::timeout};
+use tokio::{net::UdpSocket, spawn, time::timeout};
 use tracing::{debug, info, instrument};
 use url::Url;
 
@@ -44,7 +46,11 @@ impl Connection {
         idx: usize,
     ) -> Result<Connection> {
         if let Some(t) = config.driver_timeout {
-            timeout(t, Connection::new_inner(info, interconnect, config, idx)).await?
+            timeout(
+                t.into(),
+                Connection::new_inner(info, interconnect, config, idx),
+            )
+            .await?
         } else {
             Connection::new_inner(info, interconnect, config, idx).await
         }
@@ -278,7 +284,7 @@ impl Connection {
     #[instrument(skip(self))]
     pub async fn reconnect(&mut self, config: &Config) -> Result<()> {
         if let Some(t) = config.driver_timeout {
-            timeout(t, self.reconnect_inner()).await?
+            timeout(t.into(), self.reconnect_inner()).await?
         } else {
             self.reconnect_inner().await
         }
@@ -372,19 +378,16 @@ async fn init_cipher(
                         let mut session = davey::DaveSession::new(
                             version,
                             info.user_id.0.into(),
-                            info.channel_id
-                                .expect("channel ID must be set in connection info")
-                                .0
-                                .into(),
+                            info.channel_id.0.into(),
                             None,
                         )
-                        .map_err(|e| Error::DaveInitializationError(e))?;
+                        .map_err(Error::DaveInitializationError)?;
 
                         client
                             .send_binary(&GatewayEvent::DaveMlsKeyPackage(DaveMlsKeyPackage {
                                 key_package: session
                                     .create_key_package()
-                                    .map_err(|e| Error::DaveCreateKeyPackageError(e))?,
+                                    .map_err(Error::DaveCreateKeyPackageError)?,
                             }))
                             .await?;
 

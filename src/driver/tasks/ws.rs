@@ -4,7 +4,10 @@ use crate::{
     events::CoreContext,
     model::{
         payload::{Heartbeat, Speaking},
-        CloseCode as VoiceCloseCode, Event as GatewayEvent, FromPrimitive, SpeakingState,
+        CloseCode as VoiceCloseCode,
+        Event as GatewayEvent,
+        FromPrimitive,
+        SpeakingState,
     },
     ws::{Error as WsError, WsStream},
     ConnectionInfo,
@@ -14,8 +17,11 @@ use rand::{distr::Uniform, Rng};
 use serenity_voice_model::{
     id::UserId,
     payload::{
-        DaveMlsCommitWelcome, DaveMlsInvalidCommitWelcome, DaveMlsKeyPackage,
-        DaveMlsProposalsOperationType, DaveTransitionReady,
+        DaveMlsCommitWelcome,
+        DaveMlsInvalidCommitWelcome,
+        DaveMlsKeyPackage,
+        DaveMlsProposalsOperationType,
+        DaveTransitionReady,
     },
 };
 use std::{
@@ -24,12 +30,12 @@ use std::{
     sync::{
         atomic::{AtomicU16, Ordering},
         Arc,
+        RwLock,
     },
     time::Duration,
 };
 use tokio::{
     select,
-    sync::RwLock,
     time::{sleep_until, Instant},
 };
 #[cfg(feature = "tungstenite")]
@@ -296,34 +302,36 @@ impl AuxNetwork {
                     .insert(ev.transition_id, ev.protocol_version);
 
                 if ev.transition_id == 0 {
-                    self.execute_dave_transition(ev.transition_id).await;
-                } else {
-                    if ev.protocol_version == 0 {
-                        if let Some(ref mut dave_session) = *self.dave_session.write().await {
-                            dave_session.set_passthrough_mode(true, Some(120));
-                        }
-
-                        self.ws_client
-                            .send_json(&GatewayEvent::from(DaveTransitionReady {
-                                transition_id: ev.transition_id,
-                                protocol_version: ev.protocol_version,
-                            }))
-                            .await?;
+                    self.execute_dave_transition(ev.transition_id);
+                } else if ev.protocol_version == 0 {
+                    if let Some(ref mut dave_session) = *self.dave_session.write().unwrap() {
+                        dave_session.set_passthrough_mode(true, Some(120));
                     }
+
+                    self.ws_client
+                        .send_json(&GatewayEvent::from(DaveTransitionReady {
+                            transition_id: ev.transition_id,
+                            protocol_version: ev.protocol_version,
+                        }))
+                        .await?;
                 }
             },
             GatewayEvent::DaveExecuteTransition(ev) => {
-                self.execute_dave_transition(ev.transition_id).await;
+                self.execute_dave_transition(ev.transition_id);
             },
             GatewayEvent::DavePrepareEpoch(ev) if ev.epoch == 1 => {
                 self.dave_protocol_version
                     .store(ev.protocol_version, Ordering::Relaxed);
-                if let Err(e) = self.reinit_dave_session().await {
-                    warn!(error = ?e, "failed to reinitialize DAVE session");
+                match self.reinit_dave_session().await {
+                    Err(DaveReinitError::Ws(e)) => return Err(e),
+                    Err(e) => {
+                        warn!(error = ?e, "failed to reinitialize DAVE session");
+                    },
+                    _ => {},
                 }
             },
             GatewayEvent::DaveMlsExternalSender(ev) => {
-                if let Some(ref mut dave_session) = *self.dave_session.write().await {
+                if let Some(ref mut dave_session) = *self.dave_session.write().unwrap() {
                     if let Err(e) = dave_session.set_external_sender(&ev.external_sender) {
                         warn!(error = ?e, "error setting MLS external sender");
                     }
@@ -334,7 +342,8 @@ impl AuxNetwork {
                     DaveMlsProposalsOperationType::Append => davey::ProposalsOperationType::APPEND,
                     DaveMlsProposalsOperationType::Revoke => davey::ProposalsOperationType::REVOKE,
                 };
-                let result = if let Some(ref mut dave_session) = *self.dave_session.write().await {
+                let result = if let Some(ref mut dave_session) = *self.dave_session.write().unwrap()
+                {
                     match dave_session.process_proposals(
                         operation_type,
                         &ev.proposals,
@@ -366,21 +375,18 @@ impl AuxNetwork {
                 }
             },
             GatewayEvent::DaveMlsAnnounceCommitTransition(ev) => {
-                match self.dave_process_commit(&ev.commit_message).await {
-                    Some(Ok(_)) => {
-                        if ev.transition_id != 0 {
-                            let protocol_version =
-                                self.dave_protocol_version.load(Ordering::Relaxed);
+                match self.dave_process_commit(&ev.commit_message) {
+                    Some(Ok(())) if ev.transition_id != 0 => {
+                        let protocol_version = self.dave_protocol_version.load(Ordering::Relaxed);
 
-                            self.dave_pending_transitions
-                                .insert(ev.transition_id, protocol_version);
-                            self.ws_client
-                                .send_json(&GatewayEvent::from(DaveTransitionReady {
-                                    transition_id: ev.transition_id,
-                                    protocol_version,
-                                }))
-                                .await?;
-                        }
+                        self.dave_pending_transitions
+                            .insert(ev.transition_id, protocol_version);
+                        self.ws_client
+                            .send_json(&GatewayEvent::from(DaveTransitionReady {
+                                transition_id: ev.transition_id,
+                                protocol_version,
+                            }))
+                            .await?;
                     },
                     Some(Err(e)) => {
                         warn!("MLS commit errored: {e:?}");
@@ -389,43 +395,47 @@ impl AuxNetwork {
                                 transition_id: ev.transition_id,
                             }))
                             .await?;
-                        if let Err(e) = self.reinit_dave_session().await {
-                            warn!(error = ?e, "failed to reinitialize DAVE session");
+                        match self.reinit_dave_session().await {
+                            Err(DaveReinitError::Ws(e)) => return Err(e),
+                            Err(e) => {
+                                warn!(error = ?e, "failed to reinitialize DAVE session");
+                            },
+                            _ => {},
                         }
                     },
-                    None => {},
-                };
-            },
-            GatewayEvent::DaveMlsWelcome(ev) => {
-                match self.dave_process_welcome(&ev.welcome).await {
-                    Some(Ok(_)) => {
-                        if ev.transition_id != 0 {
-                            let protocol_version =
-                                self.dave_protocol_version.load(Ordering::Relaxed);
-
-                            self.dave_pending_transitions
-                                .insert(ev.transition_id, protocol_version);
-                            self.ws_client
-                                .send_json(&GatewayEvent::from(DaveTransitionReady {
-                                    transition_id: ev.transition_id,
-                                    protocol_version,
-                                }))
-                                .await?;
-                        }
-                    },
-                    Some(Err(e)) => {
-                        warn!("MLS welcome errored: {e:?}");
-                        self.ws_client
-                            .send_json(&GatewayEvent::from(DaveMlsInvalidCommitWelcome {
-                                transition_id: ev.transition_id,
-                            }))
-                            .await?;
-                        if let Err(e) = self.reinit_dave_session().await {
-                            warn!(error = ?e, "failed to reinitialize DAVE session");
-                        }
-                    },
-                    None => {},
+                    Some(Ok(())) | None => {},
                 }
+            },
+            GatewayEvent::DaveMlsWelcome(ev) => match self.dave_process_welcome(&ev.welcome) {
+                Some(Ok(())) if ev.transition_id != 0 => {
+                    let protocol_version = self.dave_protocol_version.load(Ordering::Relaxed);
+
+                    self.dave_pending_transitions
+                        .insert(ev.transition_id, protocol_version);
+                    self.ws_client
+                        .send_json(&GatewayEvent::from(DaveTransitionReady {
+                            transition_id: ev.transition_id,
+                            protocol_version,
+                        }))
+                        .await?;
+                },
+
+                Some(Err(e)) => {
+                    warn!("MLS welcome errored: {e:?}");
+                    self.ws_client
+                        .send_json(&GatewayEvent::from(DaveMlsInvalidCommitWelcome {
+                            transition_id: ev.transition_id,
+                        }))
+                        .await?;
+                    match self.reinit_dave_session().await {
+                        Err(DaveReinitError::Ws(e)) => return Err(e),
+                        Err(e) => {
+                            warn!(error = ?e, "failed to reinitialize DAVE session");
+                        },
+                        _ => {},
+                    }
+                },
+                Some(Ok(())) | None => {},
             },
             other => {
                 trace!("Received other websocket data: {:?}", other);
@@ -435,24 +445,22 @@ impl AuxNetwork {
         Ok(())
     }
 
-    async fn dave_process_commit(
+    fn dave_process_commit(
         &mut self,
         commit_message: &[u8],
     ) -> Option<Result<(), davey::errors::ProcessCommitError>> {
-        let Some(ref mut dave_session) = *self.dave_session.write().await else {
-            return None;
-        };
+        let mut dave_session_lock = self.dave_session.write().unwrap();
+        let dave_session = (*dave_session_lock).as_mut()?;
 
         Some(dave_session.process_commit(commit_message))
     }
 
-    async fn dave_process_welcome(
+    fn dave_process_welcome(
         &mut self,
         welcome: &[u8],
     ) -> Option<Result<(), davey::errors::ProcessWelcomeError>> {
-        let Some(ref mut dave_session) = *self.dave_session.write().await else {
-            return None;
-        };
+        let mut dave_session_lock = self.dave_session.write().unwrap();
+        let dave_session = (*dave_session_lock).as_mut()?;
 
         Some(dave_session.process_welcome(welcome))
     }
@@ -462,32 +470,28 @@ impl AuxNetwork {
 
         if let Some(dave_protocol_version) = NonZeroU16::new(protocol_version) {
             let user_id = self.info.user_id.0.into();
-            let channel_id = self
-                .info
-                .channel_id
-                .expect("channel ID must be set")
-                .0
-                .into();
+            let channel_id = self.info.channel_id.0.into();
 
-            let key_package = if let Some(ref mut dave_session) = *self.dave_session.write().await {
-                dave_session.reinit(dave_protocol_version, user_id, channel_id, None)?;
-                dave_session.create_key_package()?
-            } else {
-                let mut dave_session =
-                    davey::DaveSession::new(dave_protocol_version, user_id, channel_id, None)?;
-                let key_package = dave_session.create_key_package()?;
+            let key_package =
+                if let Some(ref mut dave_session) = *self.dave_session.write().unwrap() {
+                    dave_session.reinit(dave_protocol_version, user_id, channel_id, None)?;
+                    dave_session.create_key_package()?
+                } else {
+                    let mut dave_session =
+                        davey::DaveSession::new(dave_protocol_version, user_id, channel_id, None)?;
+                    let key_package = dave_session.create_key_package()?;
 
-                *self.dave_session.write().await = Some(dave_session);
+                    *self.dave_session.write().unwrap() = Some(dave_session);
 
-                key_package
-            };
+                    key_package
+                };
 
             self.ws_client
                 .send_binary(&GatewayEvent::DaveMlsKeyPackage(DaveMlsKeyPackage {
                     key_package,
                 }))
                 .await?;
-        } else if let Some(ref mut dave_session) = *self.dave_session.write().await {
+        } else if let Some(ref mut dave_session) = *self.dave_session.write().unwrap() {
             dave_session.reset()?;
             dave_session.set_passthrough_mode(true, Some(10));
         }
@@ -495,7 +499,7 @@ impl AuxNetwork {
         Ok(())
     }
 
-    async fn execute_dave_transition(&mut self, transition_id: u16) {
+    fn execute_dave_transition(&mut self, transition_id: u16) {
         let Some(new_version) = self.dave_pending_transitions.get(&transition_id).copied() else {
             warn!("Received DaveExecuteTransition for unknown transition ID {transition_id}");
             return;
@@ -507,7 +511,7 @@ impl AuxNetwork {
 
         // Upgraded from transport-only encryption
         if transition_id > 0 && old_version == 0 && new_version != 0 {
-            if let Some(ref mut dave_session) = *self.dave_session.write().await {
+            if let Some(ref mut dave_session) = *self.dave_session.write().unwrap() {
                 dave_session.set_passthrough_mode(true, Some(10));
             }
         }
@@ -527,24 +531,22 @@ fn ws_error_is_not_final(err: &WsError) -> bool {
     match err {
         #[cfg(feature = "tungstenite")]
         WsError::WsClosed(Some(frame)) => match frame.code {
-            CloseCode::Library(l) => {
+            CloseCode::Library(l) =>
                 if let Some(code) = VoiceCloseCode::from_u16(l) {
                     code.should_resume()
                 } else {
                     true
-                }
-            },
+                },
             _ => true,
         },
         #[cfg(feature = "tws")]
         WsError::WsClosed(Some(code)) => match (*code).into() {
-            code @ 4000..=4999_u16 => {
+            code @ 4000..=4999_u16 =>
                 if let Some(code) = VoiceCloseCode::from_u16(code) {
                     code.should_resume()
                 } else {
                     true
-                }
-            },
+                },
             _ => true,
         },
         e => {
